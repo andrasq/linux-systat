@@ -1,12 +1,15 @@
 systat
 ======
 
-BSD-like `systat(1)` utility for Linux.
-
-Displays memory, process, interrupt, disk and network activity.
+BSD-like `systat(1)` utility for Linux similar to `vmstat -vm`.  Displays memory,
+process, interrupt, disk and network activity.
 
 Usage: `systat [interval]`
 
+To build, check out repo and
+
+    cc -Os -o systat systat.c -lncurses
+    sudo install ./systat /usr/local/bin/
 
 
 Change Log
