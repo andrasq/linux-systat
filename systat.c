@@ -1,5 +1,8 @@
 /*
- * BSD-like systat(1) for Linux
+ * systat -- BSD-like systat(1) for Linux
+ * Copyright (C) 2007-2018 Andras Radics
+ *
+ * Licensed under the Apache License, Version 2.0
  */
 
 /*
