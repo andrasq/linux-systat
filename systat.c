@@ -1,6 +1,6 @@
 /*
  * systat -- BSD-like systat(1) for Linux
- * Copyright (C) 2007-2018 Andras Radics
+ * Copyright (C) 2007-2020 Andras Radics
  *
  * Licensed under the Apache License, Version 2.0
  */
@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.9.31"
+#define VERSION "v0.9.32"
 
 /**
 
@@ -750,9 +750,11 @@ int gather_stats()
             /* This ordering will determine the device display order */
             " nvme0n1 ", " nvme0n2 ", " nvme0n3 ", " nvme0n4 ",
             " nvme1n1 ", " nvme1n2 ", " nvme1n3 ", " nvme1n4 ",
-	    " hda ", " hdb ", " hdc ", " hdd ",
-	    " vda ", " vdb ", " vdc ", " vdd ",
-	    " sda ", " sdb ", " sdc ", " sdd ",
+            " nvme2n1 ", " nvme2n2 ", " nvme2n3 ", " nvme2n4 ",
+            " nvme3n1 ", " nvme3n2 ", " nvme3n3 ", " nvme3n4 ",
+	    " hda ", " hdb ", " hdc ", " hdd ", " hde ", " hdf ",
+	    " vda ", " vdb ", " vdc ", " vdd ", " vde ", " vdf ",
+	    " sda ", " sdb ", " sdc ", " sdd ", " sde ", " sdf ",
             " xvda ", " xvdh ",
             " dm-0 ", " dm-1 ", " dm-2 ", " dm-3 ",
 	    " sr0 ", " sr1 ",
@@ -825,6 +827,14 @@ int gather_stats()
 	if (p) _systat[1].counts.diskinfo[0][2] = strtol(p+9, NULL, 10);
 	p = strstr(buf, "disk_wblk");
 	if (p) _systat[1].counts.diskinfo[0][2] += strtol(p+9, NULL, 10);
+    }
+
+    /* patch up disknames to make them more legible: abbreviate nvme0n1 to m2-01 */
+    for (i=0; i<sizeof(_disknames); i++) {
+        int n, m;
+        if (sscanf(_disknames[i], "nvme%dn%d", &n, &m) == 2) {
+            sprintf(_disknames[i], "m2-%d%d", n, m);
+        }
     }
 
     /* network devices */
@@ -1063,7 +1073,7 @@ void delta_stats( )
 int show_stats( )
 {
     char buf[200], tmpbuf[200];
-    int i, j, r, n, wid, rowi;
+    int i, j, r, n, wid, rowi, coli;
     double scale, fr;
     char *p;
 
@@ -1213,13 +1223,17 @@ int show_stats( )
     // for each block device, print 4 stats (show as many devices as can fit, 16 max)
     n = (COLUMNS - PAGER_COL - 6) / 6 ;
     if (n > 16) n = 16;
-    for (i=0; i<n; i++) {
+    for (coli=0, i=0; i<n; i++) {
         if (!strlen(_disknames[i])) continue;
-	mvprintw(r+0, 6+6*i, "%6s", _disknames[i]);
-        mvprintw(r+1, 6+6*i, "%6.6s", shownum(5, _systat[0].deltas.diskinfo[i][0]));
-        mvprintw(r+2, 6+6*i, "%6.6s", shownum(5, _systat[0].deltas.diskinfo[i][1]));
-	mvprintw(r+3, 6+6*i, "%6.6s", showmem(5, _systat[0].deltas.diskinfo[i][2]));
-	mvprintw(r+4, 6+6*i, "%6.6s", showfloat(6, _systat[0].deltas.diskinfo[i][3] / (_INTERVAL * 1000) * 100));
+        /* only show devices with activity, to skip controllers without attached devices */
+        if (_systat[0].counts.diskinfo[i][1]) {
+            mvprintw(r+0, 6+6*coli, "%6s", _disknames[i]);
+            mvprintw(r+1, 6+6*coli, "%6.6s", shownum(5, _systat[0].deltas.diskinfo[i][0]));     // tps
+            mvprintw(r+2, 6+6*coli, "%6.6s", shownum(5, _systat[0].deltas.diskinfo[i][1]));     // xfers
+            mvprintw(r+3, 6+6*coli, "%6.6s", showmem(5, _systat[0].deltas.diskinfo[i][2]));     // blocks
+            mvprintw(r+4, 6+6*coli, "%6.6s", showfloat(6, _systat[0].deltas.diskinfo[i][3] / (_INTERVAL * 1000) * 100));        // %busy
+            ++coli;
+        }
     }
 
     /*
