@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.9.33"
+#define VERSION "v0.9.34"
 
 /**
 
@@ -510,7 +510,8 @@ int gather_stats()
     ullong i, j, n;
     int have_fault_counts = 0;
     double now = fptime();
-    
+    char tmpbuf[200];
+
     _systat[0] = _systat[1];
     memset(&_systat[1], 0, sizeof(_systat[1]));
 
@@ -758,7 +759,7 @@ int gather_stats()
 	    " sda ", " sdb ", " sdc ", " sdd ", " sde ", " sdf ",
             " xvda ", " xvdh ",
             " dm-0 ", " dm-1 ", " dm-2 ", " dm-3 ",
-	    " sr0 ", " sr1 ",
+	    " sr0 ", " sr1 ", " sr2 ", " sr3 ",
 	    " sde ", " sdf ", " sdg ", " sdh ", " sdi ",
 	    NULL };
         static int devnamelengths[lengthof(devnames)] = { 0 };
@@ -780,19 +781,33 @@ int gather_stats()
 	for (i=0; devnames[i] && ndevs<lengthof(_systat[1].counts.diskinfo); i++) {
 	    p = strstr(buf, devnames[i]);
 	    if (p) {
+                int devmajor, devminor;
 		unsigned long long nmrd, rd_mrg, rd_sec, ms_rd;
 		unsigned long long nmwr, wr_mrg, wr_sec, ms_wr;
                 unsigned long long io_cnt, io_ms, io_totms;
-		sscanf(p+devnamelengths[i], "%llu %llu %llu %llu"       // reads
-			    "%llu %llu %llu %llu"                       // writes
-                            "%llu %llu %llu",                           // ios
+
+                /* back up to the start of the line */
+                while (p > buf && *p != '\n') --p;
+
+                /* /usr/src/linux-source-4.3/Documentation/iostats.txt, kernels 2.4 and up */
+                sscanf(p, " %d %d %s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
+                       &devmajor, &devminor, tmpbuf,
 		       &nmrd, &rd_mrg, &rd_sec, &ms_rd,
                        &nmwr, &wr_mrg, &wr_sec, &ms_wr,
                        &io_cnt, &io_ms, &io_totms);
-		sscanf(p+devnamelengths[i], "%*u, %llu, %llu", &nmrd, &rd_sec);
-		_systat[1].counts.diskinfo[ndevs][0] = nmrd + nmwr + rd_mrg + wr_mrg; /* seeks, proxy as tps */
-		_systat[1].counts.diskinfo[ndevs][1] = nmrd + nmwr; /* xfers */
-		_systat[1].counts.diskinfo[ndevs][2] = rd_sec/2 + wr_sec/2; /* blks */
+
+//		sscanf(p+devnamelengths[i], "%llu %llu %llu %llu"       // reads
+//			    "%llu %llu %llu %llu"                       // writes
+//			    "%llu %llu %llu",                           // ios
+//		       &nmrd, &rd_mrg, &rd_sec, &ms_rd,
+//		       &nmwr, &wr_mrg, &wr_sec, &ms_wr,
+//		       &io_cnt, &io_ms, &io_totms);
+// AR: this next one looks wrong... skips first? nmrd??
+//		sscanf(p+devnamelengths[i], "%*u, %llu, %llu", &nmrd, &rd_sec);
+
+		_systat[1].counts.diskinfo[ndevs][0] = nmrd + nmwr + rd_mrg + wr_mrg;   /* num reads+writes, proxy for tps */
+		_systat[1].counts.diskinfo[ndevs][1] = nmrd + nmwr;                     /* xfers */
+		_systat[1].counts.diskinfo[ndevs][2] = rd_sec/2 + wr_sec/2;             /* blks */
 		_systat[1].counts.diskinfo[ndevs][3] = (ullong)((ms_rd + ms_wr) / (_INTERVAL * 1000.0) * 100);  /* msps, but track busy% */
                 _systat[1].counts.diskinfo[ndevs][3] = (ullong)(io_ms);
 		strncpy(_disknames[ndevs], devnames[i]+1, devnamelengths[i]-2);
@@ -1227,7 +1242,8 @@ int show_stats( )
     mvprintw(r+3, 0, " blks");
     mvprintw(r+4, 0, "%busy");
     // for each block device, print 4 stats (show as many devices as can fit, 16 max)
-    n = (COLUMNS - PAGER_COL - 6) / 6 ;
+    n = (PAGER_COL - 6) / 6 ;
+    if (DISKS_ROW >= 18) n += 2;
     if (n > 16) n = 16;
     for (coli=0, i=0; i<n; i++) {
         if (!strlen(_disknames[i])) continue;
@@ -1343,6 +1359,7 @@ int main( int ac, char *av[] )
     if (ac > 0)
         pause = atof(*av);
 
+// FIXME: long intervals do not work as expected (5 sec, 50 sec)
     _INTERVAL = pause;
     _linuxver = gather_version();
     _pagesize = getpagesize();

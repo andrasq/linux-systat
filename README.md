@@ -15,6 +15,7 @@ To build, check out repo and
 Change Log
 ----------
 
+- 0.9.34 - fix num disks displayed
 - 0.9.33 - abbreviate nvme dev names, display %s and %u times as core-%, not system-%
 - 0.9.31 - first github version; fix disk stats when lots of network interfaces
 
