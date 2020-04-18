@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.9.32"
+#define VERSION "v0.9.33"
 
 /**
 
@@ -209,7 +209,7 @@ Free: count of pages on the free list.
 #include <sys/ioctl.h>
 #include <signal.h>
 
-#include <asm/param.h>
+#include <asm/param.h>  // HZ
 
 #define CONTROL(c)  ((c) &  ~0x60)
 
@@ -304,6 +304,7 @@ struct system_stats_s {
 //       compute values for display by symbolic name later.
     struct {
 	float cputime[7];
+	float cpuuse[7];
 	ullong newprocs;
 	ullong pager[2];
 	ullong swapper[2];
@@ -1012,19 +1013,21 @@ void delta_stats( )
     int i, j;
     
     /* convert cpu time used into percent (measured in ticks @HZ) */
-    for (t=0, i=0; i<7; i++) {
+    /* first tally the fraction of time each cpu core used */
+    t = 0;
+    for (i=0; i<7; i++) {
 	double v =
 	    (_systat[1].counts.cputime[i] -
 	     _systat[0].counts.cputime[i]) / _INTERVAL / HZ * 100.0;
-	_systat[0].deltas.cputime[i] = v;
+	_systat[0].deltas.cpuuse[i] = v;
 	t += v;
     }
     /* if time adds up to more than 100%, normalize it
-     * (polling period flutter, or job suspended) */
-    if (t > 100.0) {
-	double s = 100.0 / t;
-	for (i=0; i<7; i++)
-	    _systat[0].deltas.cputime[i] *= s;
+     * (polling period flutter, multi-core, or job suspended) */
+    /* We keep normalized times in cputime[], and summed time in cpuuse[] */
+    double s = 100.0 / t;
+    for (i=0; i<7; i++) {
+        _systat[0].deltas.cputime[i] = _systat[0].deltas.cpuuse[i] * s;
     }
 
     _systat[0].deltas.newprocs = _systat[1].counts.nlastpid -
@@ -1075,7 +1078,7 @@ int show_stats( )
     char buf[200], tmpbuf[200];
     int i, j, r, n, wid, rowi, coli;
     double scale, fr;
-    char *p;
+    char *p, *fmt;
 
     move(0,0);
     printw(VERSION "  %3d users    Load %5.2f %5.2f %5.2f   ",
@@ -1137,16 +1140,19 @@ int show_stats( )
     mvprintw(r++, PAGER_COL-1, "%s free", shownum(8, _systat[0].counts.memstats[6]));
     mvprintw(r++, PAGER_COL-1, "%s buf", shownum(8, _systat[0].counts.memstats[13]));
 
-    move(10,0);
-    printw("%4.1f%%Sy  %4.1f%%Ir %4.1f%%Us %4.1f%%Ni %4.1f%%Id %4.1f%%Wa",
-	   _systat[0].deltas.cputime[0],	/* system */
+    wid = (_systat[0].deltas.cpuuse[0] + _systat[0].deltas.cpuuse[2]) < 990;
+    fmt = wid ? "%5.1f%%Sy %4.1f%%Ir %5.1f%%Us %4.1f%%Ni %4.1f%%Id %4.1f%%Wa  "
+              : "%5.0f%%Sy %4.1f%%Ir %5.0f%%Us %4.1f%%Ni %4.1f%%Id %4.1f%%Wa  ";
+    /* note: on first print, the counts will overflow and the line will be longer */
+    mvprintw(10, 0, fmt,
+	   _systat[0].deltas.cpuuse[0],		/* system */
 	   _systat[0].deltas.cputime[1],	/* interrupt */
-	   _systat[0].deltas.cputime[2],	/* user */
+	   _systat[0].deltas.cpuuse[2],		/* user */
 	   _systat[0].deltas.cputime[3],	/* nice */
 	   _systat[0].deltas.cputime[4],	/* idle */
            _systat[0].deltas.cputime[5]);	/* iowait */
     if (PAGER_COL >= 56) {
-        mvprintw(10, 6*8, "%4.1f%%St", _systat[0].deltas.cputime[6]);	/* steal */
+        mvprintw(10, 6*8+2, "%4.1f%%St", _systat[0].deltas.cputime[6]);   /* steal */
     }
 
     scale = (PAGER_COL < 60) ? 0.5 : 0.6;
