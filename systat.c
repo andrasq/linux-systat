@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.9.35"
+#define VERSION "v0.9.36"
 
 /**
 
@@ -33,7 +33,7 @@ AR: 0.9.0 todo changes:
 - systat: add sysinfo: num cores, total dram, total swap, num cores, avg core mhz (read from /proc/cpuinfo)
 - systat: add "Tot" row to mem: tot REAL (phys dram installed), tot VIRTUAL (swap installed)
 - systat: scale REAL/VIRTUAL mem sooner, eg no more than 3.1 digits before switching units (KB -> MB -> GB -> TB)
-- combine nvme%dq%d interrupts (two ssds have 14 total) (optional?)
++ combine nvme%dq%d interrupts (two ssds have 16 total)
 - combine eth%d-rx-%d and eth%d-tx-%d interrupts (2 each)
 - combine xhci_hcd interrupts (2 identically named)
 
@@ -238,7 +238,7 @@ int _pageKB = 4;                /* set by main */
 static WINDOW *_win;		/* initialized by main */
 
 static char _intrnames[100][40];
-static char _intrnums[60][16];
+static char _intrnums[100][40];
 static char _disknames[16][16];
 static char _netname[16][40];
 static char _nnet = 0;
@@ -561,6 +561,8 @@ int gather_stats()
     p = strsep(&nextp, "\n");
     for (i=0; i<lengthof(_intrnames); i++) {
 	char num[100];
+        int n, m;
+        unsigned long count;
         p = strsep(&nextp, "\n");
         if (p && sscanf(p, "%s:", num)) {
             // the colon-terminated tag at the front is the interrupt number (eg 8: or NMI:)
@@ -575,11 +577,33 @@ int gather_stats()
             // total up the numeric columns (per-core interrupt counts) in the middle
             while (*p != ':') p++;
             p++;
-            _systat[1].counts.intr[i] = 0;
+            count = 0;
             while (*p == ' ' || *p >= '0' && *p <= '9') {
                 while (*p == ' ') p++;
-                if (sscanf(p, "%llu", &n)) _systat[1].counts.intr[i] += n;
+                if (sscanf(p, "%llu", &n)) count += n;
                 while (*p >= '0' && *p <= '9') p++;
+            }
+
+            _systat[1].counts.intr[i] = count;
+
+            /* collapse many-valued interrupts, eg 8 nvme0q0 */
+            if (i > 0) {
+                char tmpbuf[2000], found = 0;
+                tmpbuf[0] = '\0';
+                if ((sscanf(_intrnames[i], "nvme%dq%d", &n, &m) == 2 &&
+                     strncmp(_intrnames[i], _intrnames[i-1], 5) == 0) ||
+                    (strcmp(_intrnames[i], "xhci_hcd") == 0 && strcmp(_intrnames[i-1], "xhci_hcd") == 0))
+                {
+                    found = 1;
+                }
+                if (found) {
+                    if (count > 0) {
+                        snprintf(tmpbuf, sizeof(tmpbuf), "%s%s", _intrnums[i-1], num);
+                        snprintf(_intrnums[i-1], sizeof(*_intrnums), tmpbuf);
+                        _systat[1].counts.intr[i-1] += count;
+                    }
+                    i--;
+                }
             }
         }
 	// compute totintr from the partials, the count in /proc/stat is no longer reliable
