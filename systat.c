@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.9.34"
+#define VERSION "v0.9.35"
 
 /**
 
@@ -29,6 +29,13 @@ AR: 0.9.0 todo changes:
 + accept update interval on cmdline
 + if space available, spread out the process counts (3 ch / col is not enough)
 - should change all "unsigned long" to "ullong" to for 64 bits of stats
+2020-04-18:
+- systat: add sysinfo: num cores, total dram, total swap, num cores, avg core mhz (read from /proc/cpuinfo)
+- systat: add "Tot" row to mem: tot REAL (phys dram installed), tot VIRTUAL (swap installed)
+- systat: scale REAL/VIRTUAL mem sooner, eg no more than 3.1 digits before switching units (KB -> MB -> GB -> TB)
+- combine nvme%dq%d interrupts (two ssds have 14 total) (optional?)
+- combine eth%d-rx-%d and eth%d-tx-%d interrupts (2 each)
+- combine xhci_hcd interrupts (2 identically named)
 
 **/
 
@@ -230,7 +237,7 @@ int _pageKB = 4;                /* set by main */
 
 static WINDOW *_win;		/* initialized by main */
 
-static char _intrnames[60][40];
+static char _intrnames[100][40];
 static char _intrnums[60][16];
 static char _disknames[16][16];
 static char _netname[16][40];
@@ -280,6 +287,8 @@ struct system_stats_s {
 	ullong          meminfo[2][2][2];
 	ullong          memfree;
 	ullong          memstats[14];
+        /* system hardware */
+        unsigned long sysinfo[8];       /* ncores, nthreads */
 	/* cpu usage */
 	unsigned long cputime[7];	/* sys, intr, user, nice, idle, iowait, steal */
 	unsigned long pager[2];		/* in, out */
@@ -287,7 +296,7 @@ struct system_stats_s {
 	unsigned long faults[2];	/* Linux: minflt majflt */
 	unsigned long ctxt[2];		/* csw, trp */
 	ullong        totintr;		/* total interrupts since boot */
-	ullong        intr[60];		/* interrupts from irq 0 .. 15 */
+	ullong        intr[100];	/* interrupts from irq 0 .. 15 */
 	unsigned long vm[6];		/* vss rss data stk exe lib */
 	unsigned long procs[5];		/* r p d s w */
         /* network activity */
@@ -311,7 +320,7 @@ struct system_stats_s {
 	ullong faults[2];
 	ullong ctxt[2];
 	ullong totintr;
-	ullong intr[60];
+	ullong intr[100];
 	ullong net[lengthof(_netname)*4];
 	ullong diskinfo[16][4];
 	ullong memstats[14];
@@ -464,6 +473,12 @@ int readfile( const char *filename, void *buf, int nbytes )
     return nb;
 }
 
+char * startofline( char *buf, char *p ) {
+    if (!p) return p;
+    while (p > buf && *p != '\n') p--;
+    return p > buf ? ++p : p;
+}
+
 void finddiskname( char *name, int namelen, int major, int minor )
 {
     char buf[1000], *p, *w, *q;
@@ -506,6 +521,7 @@ int gather_version( )
 int gather_stats()
 {
     ullong btime = 0;
+    // 8c/16t /proc/cpuinfo is 24k, size buf
     char *p, *q, buf[20000], fname[80], *nextp, *nextw;
     ullong i, j, n;
     int have_fault_counts = 0;
@@ -530,6 +546,14 @@ int gather_stats()
 	   &_systat[1].counts.nprocs,
 	   &_systat[1].counts.ntotalprocs,
            &_systat[1].counts.nlastpid);
+
+    if (readfile("/proc/cpuinfo", buf, sizeof(buf)) > 0) {
+        int ncores = 0, nthreads = 0;
+        if ((p = strstr(buf, "cpu cores"))) sscanf(p, "cpu cores : %d", &ncores);
+        if ((p = strstr(buf, "siblings"))) sscanf(p, "siblings : %d", &nthreads);
+        _systat[1].counts.sysinfo[0] = ncores;
+        _systat[1].counts.sysinfo[1] = nthreads;
+    }
 
     readfile("/proc/interrupts", buf, sizeof(buf));
     _systat[1].counts.totintr = 0;
@@ -563,47 +587,48 @@ int gather_stats()
     }
 
     /* Mem: usage */
-    readfile("/proc/meminfo", buf, sizeof(buf));
-    p = strstr(buf, "MemTotal:");
-    //if (p) _systat[1].counts.meminfo[1][0][0] = strtoul(p+9, NULL, 10);
+    if (readfile("/proc/meminfo", buf, sizeof(buf)) > 0) {
+        p = strstr(buf, "MemTotal:");
+        if (p) _systat[1].counts.sysinfo[2] = strtoul(p+9, NULL, 10);
 
-    /* Active = Active(anon) + Active(file), ie data pages + file pages */
-    p = strstr(buf, "Active:");
-    //if (p) _systat[1].counts.meminfo[0][0][0] = strtoul(p+7, NULL, 10);
-    if (p) _systat[1].counts.memstats[3] = strtoul(p+7, NULL, 10);
-    // total up active rss instead
-    //if (p) _systat[1].counts.meminfo[0][0][0] = strtoul(p+7, NULL, 10);
-    p = strstr(buf, "Inactive:");
-    if (p) _systat[1].counts.memstats[4] = strtoul(p+9, NULL, 10);
-    p = strstr(buf, "MemFree:");
-    if (p) sscanf(p+8, "%llu", &_systat[1].counts.memfree);
-    if (p) _systat[1].counts.memstats[6] = strtoul(p+8, NULL, 10);
-    //p = strstr(buf, "MemShared:");
-    //if (p) sscanf(p+10, "%lu", &_systat[1].counts.meminfo[1][0][1]);
-    p = strstr(buf, "Shmem:");
-    if (p) _systat[1].counts.meminfo[1][0][1] = strtoul(p+6, NULL, 10);
-    // maybe also count ShmemHugePages, ShmemPmdMapped
-    // note: not MemTotal, systat reports on mem held by processes, not total in system
-    //p = strstr(buf, "MemTotal:");
-    //if (p) _systat[1].counts.meminfo[1][0][0] = strtoul(p+10, NULL, 10);
+        /* Active = Active(anon) + Active(file), ie data pages + file pages */
+        p = strstr(buf, "Active:");
+        //if (p) _systat[1].counts.meminfo[0][0][0] = strtoul(p+7, NULL, 10);
+        if (p) _systat[1].counts.memstats[3] = strtoul(p+7, NULL, 10);
+        // total up active rss instead
+        //if (p) _systat[1].counts.meminfo[0][0][0] = strtoul(p+7, NULL, 10);
+        p = strstr(buf, "Inactive:");
+        if (p) _systat[1].counts.memstats[4] = strtoul(p+9, NULL, 10);
+        p = strstr(buf, "MemFree:");
+        if (p) sscanf(p+8, "%llu", &_systat[1].counts.memfree);
+        if (p) _systat[1].counts.memstats[6] = strtoul(p+8, NULL, 10);
+        //p = strstr(buf, "MemShared:");
+        //if (p) sscanf(p+10, "%lu", &_systat[1].counts.meminfo[1][0][1]);
+        p = strstr(buf, "Shmem:");
+        if (p) _systat[1].counts.meminfo[1][0][1] = strtoul(p+6, NULL, 10);
+        // maybe also count ShmemHugePages, ShmemPmdMapped
+        // note: not MemTotal, systat reports on mem held by processes, not total in system
+        //p = strstr(buf, "MemTotal:");
+        //if (p) _systat[1].counts.meminfo[1][0][0] = strtoul(p+10, NULL, 10);
 
-    /* swap activity */
-    p = strstr(buf, "SwapTotal:");
-    /* increasing swap used indicates data swapped out */
-    if (p) _systat[1].counts.swapper[1] = strtoul(p+10, NULL, 10);
-    /* increasing free swap indicates data swapped in */
-    p = strstr(buf, "SwapFree:");
-    if (p) _systat[1].counts.swapper[0] = strtoul(p+9, NULL, 10);
+        /* swap activity */
+        p = strstr(buf, "SwapTotal:");
+        /* increasing swap used indicates data swapped out */
+        if (p) _systat[1].counts.swapper[1] = strtoul(p+10, NULL, 10);
+        /* increasing free swap indicates data swapped in */
+        p = strstr(buf, "SwapFree:");
+        if (p) _systat[1].counts.swapper[0] = strtoul(p+9, NULL, 10);
 
-    /* other memory stats */
-    p = strstr(buf, "Cached:");
-    if (p) _systat[1].counts.memstats[5] = strtoul(p+7, NULL, 10);
-    p = strstr(buf, "SwapCached:");
-    if (p) _systat[1].counts.memstats[5] += strtoul(p+11, NULL, 10);
-    p = strstr(buf, "Buffers:");
-    if (p) _systat[1].counts.memstats[13] = strtoul(p+8, NULL, 10);
-    p = strstr(buf, "Unevictable:");
-    if (p) _systat[1].counts.memstats[2] = strtoul(p+12, NULL, 10);
+        /* other memory stats */
+        p = strstr(buf, "Cached:");
+        if (p) _systat[1].counts.memstats[5] = strtoul(p+7, NULL, 10);
+        p = strstr(buf, "SwapCached:");
+        if (p) _systat[1].counts.memstats[5] += strtoul(p+11, NULL, 10);
+        p = strstr(buf, "Buffers:");
+        if (p) _systat[1].counts.memstats[13] = strtoul(p+8, NULL, 10);
+        p = strstr(buf, "Unevictable:");
+        if (p) _systat[1].counts.memstats[2] = strtoul(p+12, NULL, 10);
+    }
 
     /* NOTE: vmstat:nr_shmem is in pages, meminfo:Shmem in kilobytes! (4x more) */
     if (readfile("/proc/vmstat", buf, sizeof(buf)) > 0) {
@@ -706,7 +731,8 @@ int gather_stats()
 	       &_systat[1].counts.swapper[1]);
     }
 
-    // note: as of the 4.x kernels (4.14?), /proc/stat no longer maintains accurate counts
+    // note: as of the 4.x kernels (4.14?), /proc/stat no longer maintains accurate intr counts
+    // see /proc/interrupts instead, which keeps per-core counts
     p = strstr(buf, "\nintr ");
     // Even the totintr is does not match a hand-total (totintr is too low)
     //sscanf(p, " intr %llu", &_systat[1].counts.totintr);
@@ -787,7 +813,7 @@ int gather_stats()
                 unsigned long long io_cnt, io_ms, io_totms;
 
                 /* back up to the start of the line */
-                while (p > buf && *p != '\n') --p;
+                p = startofline(buf, p);
 
                 /* /usr/src/linux-source-4.3/Documentation/iostats.txt, kernels 2.4 and up */
                 sscanf(p, " %d %d %s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
@@ -1234,6 +1260,13 @@ int show_stats( )
     mvprintw(4, PAGER_COL+14, "%5s", p);
     p = showmem(5, _systat[0].deltas.swapper[1]); while (*p == ' ') p++;
     mvprintw(4, PAGER_COL+20, "%-5s", p);
+
+    // TEST:
+    r = DISKS_ROW - 1;
+    mvprintw(r, 0, "Cpus %luc/%lut, Mem %s",
+        _systat[0].counts.sysinfo[0],
+        _systat[0].counts.sysinfo[1],
+        showmem(6, _systat[0].counts.sysinfo[2]));
 
     r = DISKS_ROW;
     mvprintw(r+0, 0, "Disks");
