@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.9.36"
+#define VERSION "v0.9.37-a"
 
 /**
 
@@ -288,7 +288,11 @@ struct system_stats_s {
 	ullong          memfree;
 	ullong          memstats[14];
         /* system hardware */
-        unsigned long sysinfo[8];       /* ncores, nthreads */
+        struct {
+            ulong ncores;
+            ulong nthreads;
+            ulong memtotalkb;
+        } sysinfo;
 	/* cpu usage */
 	unsigned long cputime[7];	/* sys, intr, user, nice, idle, iowait, steal */
 	unsigned long pager[2];		/* in, out */
@@ -551,8 +555,8 @@ int gather_stats()
         int ncores = 0, nthreads = 0;
         if ((p = strstr(buf, "cpu cores"))) sscanf(p, "cpu cores : %d", &ncores);
         if ((p = strstr(buf, "siblings"))) sscanf(p, "siblings : %d", &nthreads);
-        _systat[1].counts.sysinfo[0] = ncores;
-        _systat[1].counts.sysinfo[1] = nthreads;
+        _systat[1].counts.sysinfo.ncores = ncores;
+        _systat[1].counts.sysinfo.nthreads = nthreads;
     }
 
     readfile("/proc/interrupts", buf, sizeof(buf));
@@ -613,7 +617,7 @@ int gather_stats()
     /* Mem: usage */
     if (readfile("/proc/meminfo", buf, sizeof(buf)) > 0) {
         p = strstr(buf, "MemTotal:");
-        if (p) _systat[1].counts.sysinfo[2] = strtoul(p+9, NULL, 10);
+        if (p) _systat[1].counts.sysinfo.memtotalkb = strtoul(p+9, NULL, 10);
 
         /* Active = Active(anon) + Active(file), ie data pages + file pages */
         p = strstr(buf, "Active:");
@@ -1288,9 +1292,9 @@ int show_stats( )
     // TEST:
     r = DISKS_ROW - 1;
     mvprintw(r, 0, "Cpus %luc/%lut, Mem %s",
-        _systat[0].counts.sysinfo[0],
-        _systat[0].counts.sysinfo[1],
-        showmem(6, _systat[0].counts.sysinfo[2]));
+        _systat[0].counts.sysinfo.ncores,
+        _systat[0].counts.sysinfo.nthreads,
+        showmem(6, _systat[0].counts.sysinfo.memtotalkb));
 
     r = DISKS_ROW;
     mvprintw(r+0, 0, "Disks");
