@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.9.37-a"
+#define VERSION "v0.9.37"
 
 /**
 
@@ -292,6 +292,7 @@ struct system_stats_s {
             ulong ncores;
             ulong nthreads;
             ulong memtotalkb;
+            double mhz;
         } sysinfo;
 	/* cpu usage */
 	unsigned long cputime[7];	/* sys, intr, user, nice, idle, iowait, steal */
@@ -526,7 +527,7 @@ int gather_stats()
 {
     ullong btime = 0;
     // 8c/16t /proc/cpuinfo is 24k, size buf
-    char *p, *q, buf[20000], fname[80], *nextp, *nextw;
+    char *p, *q, buf[100000], fname[80], *nextp, *nextw;
     ullong i, j, n;
     int have_fault_counts = 0;
     double now = fptime();
@@ -552,11 +553,20 @@ int gather_stats()
            &_systat[1].counts.nlastpid);
 
     if (readfile("/proc/cpuinfo", buf, sizeof(buf)) > 0) {
-        int ncores = 0, nthreads = 0;
+        int ncores = 0, nthreads = 0, nmhz = 0;
+        double mhz, totmhz = 0;
         if ((p = strstr(buf, "cpu cores"))) sscanf(p, "cpu cores : %d", &ncores);
         if ((p = strstr(buf, "siblings"))) sscanf(p, "siblings : %d", &nthreads);
+        for (p = buf; (p = strstr(p, "cpu MHz")); ) {
+            if (sscanf(p, "cpu MHz : %lf", &mhz) == 1) {
+                totmhz += mhz;
+                nmhz += 1;
+            }
+            p = p + 20;
+        }
         _systat[1].counts.sysinfo.ncores = ncores;
         _systat[1].counts.sysinfo.nthreads = nthreads;
+        _systat[1].counts.sysinfo.mhz = nmhz ? totmhz / nmhz : mhz;
     }
 
     readfile("/proc/interrupts", buf, sizeof(buf));
@@ -1149,31 +1159,39 @@ int show_stats( )
     double scale, fr;
     char *p, *fmt;
 
-    move(0,0);
-    printw(VERSION "  %3d users    Load %5.2f %5.2f %5.2f   ",
-	   _systat[0].counts.nusers,
+    mvprintw(0, 0, VERSION);
+    mvprintw(0, 12, "%d users", _systat[0].counts.nusers);
+    mvprintw(0, 23, "Load %5.2f %5.2f %5.2f   ",
 	   _systat[0].counts.loadavg[0],
 	   _systat[0].counts.loadavg[1],
 	   _systat[0].counts.loadavg[2]);
+    mvprintw(1, 12, "Mark");
+
+    // TEST:
+    r = DISKS_ROW - 1;
+    mvprintw(1, 12, "Cpus %luc/%lut  %5.3f GHz",
+        _systat[0].counts.sysinfo.ncores,
+        _systat[0].counts.sysinfo.nthreads,
+        _systat[0].counts.sysinfo.mhz / 1000);
+
     mvprintw(0, PAGER_COL+5, "%.19s.%03d", ctime(&_systat[0].counts.date), _systat[0].counts.ms);
 
-    move(2,0);
-    printw("Mem:KB    REAL            VIRTUAL");
     move(3,0);
-    printw("        Tot   Share      Tot    Share    Free");
+    printw("Mem %7s   Share   VM Tot    Share    Free", showmem(7, _systat[0].counts.sysinfo.memtotalkb));
+    // printw("Tot %7s   Share   VM Tot    Share    Free", _systat[0].counts.sysinfo.memtotalkb);
     move(4,0);
-    printw("Act %7s %7s  %7s  %7s %7s count",
-	   showmem(7, _systat[0].counts.meminfo[0][0][0]),
-	   showmem(7, _systat[0].counts.meminfo[0][0][1]),
-	   showmem(7, _systat[0].counts.meminfo[0][1][0]),
-	   showmem(7, _systat[0].counts.meminfo[0][1][1]),
-	   showmem(7, _systat[0].counts.memfree));
+    printw("Act %7s %7s  %7s  %7s %7s  Mem",
+	   showmem(6, _systat[0].counts.meminfo[0][0][0]),
+	   showmem(6, _systat[0].counts.meminfo[0][0][1]),
+	   showmem(6, _systat[0].counts.meminfo[0][1][0]),
+	   showmem(6, _systat[0].counts.meminfo[0][1][1]),
+	   showmem(6, _systat[0].counts.memfree));
     move(5,0);
-    printw("All %7s %7s  %7s  %7s         pages",
-	   showmem(7, _systat[0].counts.meminfo[1][0][0]),
-	   showmem(7, _systat[0].counts.meminfo[1][0][1]),
-	   showmem(7, _systat[0].counts.meminfo[1][1][0]),
-	   showmem(7, _systat[0].counts.meminfo[1][1][1]));
+    printw("All %7s %7s  %7s  %7s          in kb",
+	   showmem(6, _systat[0].counts.meminfo[1][0][0]),
+	   showmem(6, _systat[0].counts.meminfo[1][0][1]),
+	   showmem(6, _systat[0].counts.meminfo[1][1][0]),
+	   showmem(6, _systat[0].counts.meminfo[1][1][1]));
 
     /* process stats */
     // was: mvprintw(7, 0, "Proc:r  p  d  s  w   Csw  Trp   Sys  Int  Sof  Flt");
@@ -1288,13 +1306,6 @@ int show_stats( )
     mvprintw(4, PAGER_COL+14, "%5s", p);
     p = showmem(5, _systat[0].deltas.swapper[1]); while (*p == ' ') p++;
     mvprintw(4, PAGER_COL+20, "%-5s", p);
-
-    // TEST:
-    r = DISKS_ROW - 1;
-    mvprintw(r, 0, "Cpus %luc/%lut, Mem %s",
-        _systat[0].counts.sysinfo.ncores,
-        _systat[0].counts.sysinfo.nthreads,
-        showmem(6, _systat[0].counts.sysinfo.memtotalkb));
 
     r = DISKS_ROW;
     mvprintw(r+0, 0, "Disks");
