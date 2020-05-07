@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.9.37"
+#define VERSION "v0.9.38"
 
 /**
 
@@ -909,11 +909,11 @@ int gather_stats()
 	if (p) _systat[1].counts.diskinfo[0][2] += strtol(p+9, NULL, 10);
     }
 
-    /* patch up disknames to make them more legible: abbreviate nvme0n1 to m2-01 */
+    /* patch up disknames to make them more legible: abbreviate nvme0n1 to nvme0 */
     for (i=0; i<sizeof(_disknames); i++) {
         int n, m;
         if (sscanf(_disknames[i], "nvme%dn%d", &n, &m) == 2) {
-            sprintf(_disknames[i], "m2-%d%d", n, m);
+            sprintf(_disknames[i], "nvme%d", n, m);
         }
     }
 
