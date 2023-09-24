@@ -1,6 +1,6 @@
 /*
  * systat -- BSD-like systat(1) for Linux
- * Copyright (C) 2007-2020 Andras Radics
+ * Copyright (C) 2007-2023 Andras Radics
  *
  * Licensed under the Apache License, Version 2.0
  */
@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.9.38"
+#define VERSION "v0.10.0"
 
 /**
 
@@ -35,7 +35,7 @@ AR: 0.9.0 todo changes:
 - systat: scale REAL/VIRTUAL mem sooner, eg no more than 3.1 digits before switching units (KB -> MB -> GB -> TB)
 + combine nvme%dq%d interrupts (two ssds have 16 total)
 - combine eth%d-rx-%d and eth%d-tx-%d interrupts (2 each)
-- combine xhci_hcd interrupts (2 identically named)
++ combine xhci_hcd interrupts (2 identically named)
 
 **/
 
@@ -271,6 +271,12 @@ static int _had_hup = 0;
 void on_sighup( )
 {
     _had_hup = 1;
+}
+
+static int _had_sigterm = 0;
+void on_sigterm( )
+{
+    _had_sigterm = 1;
 }
 
 struct system_stats_s {
@@ -555,18 +561,29 @@ int gather_stats()
     if (readfile("/proc/cpuinfo", buf, sizeof(buf)) > 0) {
         int ncores = 0, nthreads = 0, nmhz = 0;
         double mhz, totmhz = 0;
+        // see /sys/devices/system/cpu/cpu*/topology/thread_siblings_list for pairings 0,8 1,9 etc
+        // to disable at runtime: echo 0 > /sys/devices/system/cpu/cpu9/online
+        // to disable at boottime: append `noht` kernel flag
         if ((p = strstr(buf, "cpu cores"))) sscanf(p, "cpu cores : %d", &ncores);
         if ((p = strstr(buf, "siblings"))) sscanf(p, "siblings : %d", &nthreads);
         for (p = buf; (p = strstr(p, "cpu MHz")); ) {
             if (sscanf(p, "cpu MHz : %lf", &mhz) == 1) {
                 totmhz += mhz;
                 nmhz += 1;
+                if (mhz > maxmhz) maxmhz = mhz;
             }
             p = p + 20;
         }
+        // the number of physical cores is the greater of "cpu cores" or the number of MHz lines
+        // Inside a VM the cpu cores and threads values can be just 1, disbelieve that.
+        // Cores count does not reflect cores added to a VM while running.
+        // Siblings count in a VM seems to always reflect the physical not virtual processor.
+        // MHz count in a VM seems to show all physical cores not just virtual.
+        if (nthreads < vcores) nthreads = vcores;
         _systat[1].counts.sysinfo.ncores = ncores;
         _systat[1].counts.sysinfo.nthreads = nthreads;
-        _systat[1].counts.sysinfo.mhz = nmhz ? totmhz / nmhz : mhz;
+        // _systat[1].counts.sysinfo.mhz = nmhz ? totmhz / nmhz : mhz;
+        _systat[1].counts.sysinfo.mhz = maxmhz;
     }
 
     readfile("/proc/interrupts", buf, sizeof(buf));
@@ -740,6 +757,8 @@ int gather_stats()
     if (_linuxver >= 2006011) {
         // have available iowait, steal
         // skip irq, softirq (derived below)
+        // The counts are kernel jiffies spent in each state since boot, always increasing.
+        // The counts should always total seconds_since_boot * HZ (jiffies per second)
         sscanf(p, " cpu %lu %lu %lu %lu %lu %*u %*u %lu",
                &_systat[1].counts.cputime[2],	// user
                &_systat[1].counts.cputime[3],	// nice
@@ -747,6 +766,8 @@ int gather_stats()
                &_systat[1].counts.cputime[4],	// idle
                &_systat[1].counts.cputime[5],	// iowait
                &_systat[1].counts.cputime[6]	// steal
+                                                // TODO: guest
+                                                // TODO: guest-nice
         );
     }
     else {
@@ -1091,19 +1112,20 @@ void delta_stats( )
     double t;
     int i, j;
     
-    /* convert cpu time used into percent (measured in ticks @HZ) */
-    /* first tally the fraction of time each cpu core used */
+    /* convert cpu time used (in jiffies) into percent (measured in ticks @HZ) */
+    /* The times are for all cpu cores total, we do not read the per-core stats */
     t = 0;
     for (i=0; i<7; i++) {
-	double v =
-	    (_systat[1].counts.cputime[i] -
-	     _systat[0].counts.cputime[i]) / _INTERVAL / HZ * 100.0;
+        /* v = (jiffies counted / jiffies per sampling interval) * 100% */
+        double njiffies = (_systat[1].counts.cputime[i] - _systat[0].counts.cputime[i]);
+        double maxjiffies = HZ * _INTERVAL;  /* jiffies/second * seconds/interval */
+        double v = njiffies / maxjiffies * 100.0;
 	_systat[0].deltas.cpuuse[i] = v;
 	t += v;
     }
-    /* if time adds up to more than 100%, normalize it
-     * (polling period flutter, multi-core, or job suspended) */
-    /* We keep normalized times in cputime[], and summed time in cpuuse[] */
+    /* Normalize the times to 0..100% of the total available time in this interval.
+     * (also account for polling period flutter, multi-core, or job suspended) */
+    /* We keep 0-100% normalized times in cputime[], and summed % time in cpuuse[] */
     double s = 100.0 / t;
     for (i=0; i<7; i++) {
         _systat[0].deltas.cputime[i] = _systat[0].deltas.cpuuse[i] * s;
@@ -1228,18 +1250,21 @@ int show_stats( )
     mvprintw(r++, PAGER_COL-1, "%s buf", shownum(8, _systat[0].counts.memstats[13]));
 
     wid = (_systat[0].deltas.cpuuse[0] + _systat[0].deltas.cpuuse[2]) < 990;
-    fmt = wid ? "%5.1f%%Sy %4.1f%%Ir %5.1f%%Us %4.1f%%Ni %4.1f%%Id %4.1f%%Wa  "
-              : "%5.0f%%Sy %4.1f%%Ir %5.0f%%Us %4.1f%%Ni %4.1f%%Id %4.1f%%Wa  ";
+    fmt = wid ? "%5.1f%%s %5.1f%%q %5.1f%%u %5.1f%%n %5.1f%%i %5.1f%%w            "
+              : "%5.0f%%s %5.1f%%q %5.0f%%u %5.1f%%n %5.1f%%i %5.1f%%w            ";
     /* note: on first print, the counts will overflow and the line will be longer */
+    /* the above line is extra long to clear the overprint caused by the very very large initial jiffies count */
     mvprintw(10, 0, fmt,
 	   _systat[0].deltas.cpuuse[0],		/* system */
-	   _systat[0].deltas.cputime[1],	/* interrupt */
-	   _systat[0].deltas.cpuuse[2],		/* user */
-	   _systat[0].deltas.cputime[3],	/* nice */
-	   _systat[0].deltas.cputime[4],	/* idle */
-           _systat[0].deltas.cputime[5]);	/* iowait */
+	   _systat[0].deltas.cpuuse[1],         /* interrupt */
+	   _systat[0].deltas.cpuuse[2],		/* user not including nice */
+	   _systat[0].deltas.cpuuse[3],         /* nice */
+	   _systat[0].deltas.cputime[4],        /* idle -- as percent of total system time */
+           _systat[0].deltas.cpuuse[5]);	/* iowait */
+                                                /* TODO: guest, guest-nice */
     if (PAGER_COL >= 56) {
-        mvprintw(10, 6*8+2, "%4.1f%%St", _systat[0].deltas.cputime[6]);   /* steal */
+        mvprintw(10, 6*8+2, "%5.1f%%t", _systat[0].deltas.cputime[6]);   /* steal */
+        /* TODO: guest, guest-nice */
     }
 
     scale = (PAGER_COL < 60) ? 0.5 : 0.6;
@@ -1407,6 +1432,7 @@ int main( int ac, char *av[] )
 
     signal(SIGWINCH, on_winch);
     signal(SIGHUP, on_sighup);
+    signal(SIGKILL, on_sigterm);
 
     while ((c = getopt(ac, av, "hV")) >= 0) {
 	switch (c) {
@@ -1446,7 +1472,7 @@ int main( int ac, char *av[] )
     nodelay(_win, 1);
 
     mark = fptime();
-    for ( ; !done && !_had_hup; ) {
+    for ( ; !done && !_had_hup && !_had_sigterm; ) {
 	static int first = 1;
 
 	gather_stats();
