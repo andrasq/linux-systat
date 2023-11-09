@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.10.1"
+#define VERSION "v0.10.2"
 
 /**
 
@@ -619,10 +619,13 @@ int gather_stats()
 
             /* collapse many-valued interrupts, eg 8 nvme0q0 */
             if (i > 0) {
-                char tmpbuf[2000], found = 0;
+                char tmpbuf[2000], found = 0, yeslong;
                 tmpbuf[0] = '\0';
-                if ((sscanf(_intrnames[i], "nvme%dq%d", &n, &m) == 2 &&
-                     strncmp(_intrnames[i], _intrnames[i-1], 5) == 0) ||
+                yeslong = sscanf(_intrnames[i], "nvme%ldq%ld", &n, &m) == 2 ||
+                    sscanf(_intrnames[i], "megasas%ld-msix%ld", &n, &m) ||
+                    sscanf(_intrnames[i], "eno%ld-TxRx-%ld", &n, &m) ||
+                    sscanf(_intrnames[i], "mpt3sas%ld-msix%ld", &n, &m);
+                if ((yeslong && strncmp(_intrnames[i], _intrnames[i-1], 5) == 0) ||
                     (strcmp(_intrnames[i], "xhci_hcd") == 0 && strcmp(_intrnames[i-1], "xhci_hcd") == 0))
                 {
                     found = 1;
@@ -1392,7 +1395,7 @@ int usage( int ecode )
 	"  -V    show version and exit\n"
 	"\n"
 	"Written by Andras Radics to mimic the BSD 2.2 \"% systat -vm\" command.\n"
-	"Linux is Unix.  GNU's Not Unix.\n"
+	"Motto: Linux is Unix. GNU's Not Unix.\n"
 	"";
     fprintf((ecode ? stderr : stdout), "%s", msg);
     exit(ecode);
@@ -1400,9 +1403,12 @@ int usage( int ecode )
 
 void die( int ecode )
 {
-    endwin();
-    nocbreak();
+    fflush(stdout);
     echo();
+    nocbreak();
+    // IMPORTANT: endwin must be called after echo and cbreak have been restored, else
+    // the terminal is left in noecho mode with printed newlines not adding carriage returns
+    endwin();
     exit(ecode);
 }
 
