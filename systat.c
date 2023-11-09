@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.10.2"
+#define VERSION "v0.10.3"
 
 /**
 
@@ -219,6 +219,7 @@ Free: count of pages on the free list.
 #include <asm/param.h>  // HZ
 
 #define CONTROL(c)  ((c) &  ~0x60)
+#define MAXCORES 4096
 
 #define ulong unsigned long
 #define uint unsigned int
@@ -295,6 +296,7 @@ struct system_stats_s {
 	ullong          memstats[14];
         /* system hardware */
         struct {
+            ulong ncpus;
             ulong ncores;
             ulong nthreads;
             ulong memtotalkb;
@@ -529,7 +531,17 @@ int gather_version( )
     return _linuxver;
 }
 
-int gather_stats()
+unsigned char _pops[4] = {0, 1, 1, 2};
+int popcount(unsigned char *bitbuf, int size) {
+    int i, count = 0;
+    for (i = 0; i < size; i++) {
+        int ch = bitbuf[i];
+        count += (_pops[ch & 3] + _pops[(ch >> 2) & 3] + _pops[(ch >> 4) & 3] + _pops[(ch >> 6) & 3]);
+    }
+    return count;
+}
+
+int gather_stats(long loop_count)
 {
     ullong btime = 0;
     // 8c/16t /proc/cpuinfo is 24k, size buf
@@ -559,30 +571,47 @@ int gather_stats()
            &_systat[1].counts.nlastpid);
 
     if (readfile("/proc/cpuinfo", buf, sizeof(buf)) > 0) {
-        int ncores = 0, nthreads = 0, nmhz = 0;
-        double mhz, totmhz = 0;
+        int ncpus = 0, ncores = 0, nthreads = 0, nmhz = 0, maxmhz = 0, vcores = 0;
         // see /sys/devices/system/cpu/cpu*/topology/thread_siblings_list for pairings 0,8 1,9 etc
         // to disable at runtime: echo 0 > /sys/devices/system/cpu/cpu9/online
         // to disable at boottime: append `noht` kernel flag
-        if ((p = strstr(buf, "cpu cores"))) sscanf(p, "cpu cores : %d", &ncores);
-        if ((p = strstr(buf, "siblings"))) sscanf(p, "siblings : %d", &nthreads);
-        for (p = buf; (p = strstr(p, "cpu MHz")); ) {
-            if (sscanf(p, "cpu MHz : %lf", &mhz) == 1) {
-                totmhz += mhz;
-                nmhz += 1;
-                if (mhz > maxmhz) maxmhz = mhz;
+// TODO: find a way to distinguish containers from bare metal and report on container limits (eg k8 crdb)
+
+        // TODO: only need to read processor every so often (at start and to catch changes)
+        long maxCore = -1, maxCpu = -1;
+        unsigned char coremask[MAXCORES/8], cpumask[MAXCORES/8];
+        memset(coremask, 0, sizeof(coremask));
+        memset(cpumask, 0, sizeof(cpumask));
+        for (p = buf; (q = strstr(p, "processor")); p = q + 10) {
+            char *line;
+            long n;
+            double mhz;
+
+            nthreads += 1;
+
+            // cores on each cpu are numbered starting at 0, but not necessarily contiguously (eg Xeon Silver 4214)
+            line = strstr(q, "core id");
+            if (line && sscanf(line, "core id : %ld", &n) == 1 && n < MAXCORES) coremask[n/8] |= 1 << (n & 7);
+
+            // cpus are numbered starting at 0, unclear whether contiguously
+            line = strstr(q, "physical id");
+            if (line && sscanf(line, "physical id : %ld", &n) == 1 && n < MAXCORES) {
+                cpumask[n/8] |= 1 << (n & 7);
             }
-            p = p + 20;
+
+            // the kernel shows the current speed of each cpu, use that to calc the average
+            line = strstr(q, "cpu MHz");
+            if (line && sscanf(line, "cpu MHz : %lf", &mhz) == 1 && mhz > maxmhz) maxmhz = mhz;
         }
-        // the number of physical cores is the greater of "cpu cores" or the number of MHz lines
-        // Inside a VM the cpu cores and threads values can be just 1, disbelieve that.
+        ncpus = popcount(cpumask, sizeof(cpumask));
+        ncores = popcount(coremask, sizeof(coremask));
+
         // Cores count does not reflect cores added to a VM while running.
-        // Siblings count in a VM seems to always reflect the physical not virtual processor.
         // MHz count in a VM seems to show all physical cores not just virtual.
-        if (nthreads < vcores) nthreads = vcores;
-        _systat[1].counts.sysinfo.ncores = ncores;
+        _systat[1].counts.sysinfo.ncpus = ncpus;
+        // NOTE: we assume all cpus have the same number of cores
+        _systat[1].counts.sysinfo.ncores = ncpus * ncores;
         _systat[1].counts.sysinfo.nthreads = nthreads;
-        // _systat[1].counts.sysinfo.mhz = nmhz ? totmhz / nmhz : mhz;
         _systat[1].counts.sysinfo.mhz = maxmhz;
     }
 
@@ -1194,7 +1223,8 @@ int show_stats( )
 
     // TEST:
     r = DISKS_ROW - 1;
-    mvprintw(1, 12, "Cpus %luc/%lut  %5.3f GHz",
+    mvprintw(1, 12, "Cpus %lup/%luc/%lut  %5.3f GHz",
+        _systat[0].counts.sysinfo.ncpus,
         _systat[0].counts.sysinfo.ncores,
         _systat[0].counts.sysinfo.nthreads,
         _systat[0].counts.sysinfo.mhz / 1000);
@@ -1478,10 +1508,11 @@ int main( int ac, char *av[] )
     nodelay(_win, 1);
 
     mark = fptime();
-    for ( ; !done && !_had_hup && !_had_sigterm; ) {
+    long loop_count = 0;
+    for ( ; !done && !_had_hup && !_had_sigterm; loop_count++) {
 	static int first = 1;
 
-	gather_stats();
+	gather_stats(loop_count);
 	delta_stats();
 	show_stats();
 	refresh();
