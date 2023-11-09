@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.10.0"
+#define VERSION "v0.10.1"
 
 /**
 
@@ -592,7 +592,7 @@ int gather_stats()
     p = strsep(&nextp, "\n");
     for (i=0; i<lengthof(_intrnames); i++) {
 	char num[100];
-        int n, m;
+        unsigned long int n, m;
         unsigned long count;
         p = strsep(&nextp, "\n");
         if (p && sscanf(p, "%s:", num)) {
@@ -611,7 +611,7 @@ int gather_stats()
             count = 0;
             while (*p == ' ' || *p >= '0' && *p <= '9') {
                 while (*p == ' ') p++;
-                if (sscanf(p, "%llu", &n)) count += n;
+                if (sscanf(p, "%lu", &n)) count += n;
                 while (*p >= '0' && *p <= '9') p++;
             }
 
@@ -630,7 +630,7 @@ int gather_stats()
                 if (found) {
                     if (count > 0) {
                         snprintf(tmpbuf, sizeof(tmpbuf), "%s%s", _intrnums[i-1], num);
-                        snprintf(_intrnums[i-1], sizeof(*_intrnums), tmpbuf);
+                        snprintf(_intrnums[i-1], sizeof(*_intrnums), "%s", tmpbuf);
                         _systat[1].counts.intr[i-1] += count;
                     }
                     i--;
@@ -934,7 +934,7 @@ int gather_stats()
     for (i=0; i<sizeof(_disknames); i++) {
         int n, m;
         if (sscanf(_disknames[i], "nvme%dn%d", &n, &m) == 2) {
-            sprintf(_disknames[i], "nvme%d", n, m);
+            sprintf(_disknames[i], "nvme%d", n /*, m*/);
         }
     }
 
@@ -1362,11 +1362,11 @@ int show_stats( )
      */
     for (rowi=14, i=0; i<_nnet && rowi<14+8; i++) {
         if (i >= DISKS_ROW) break;
-        mvprintw(rowi, 0, "                                                  ");
+        mvprintw(rowi, 0, "                                                    ");
 	move(rowi,0);
         // only display those interfaces that have ever been active
 	if (_systat[0].counts.net[i*4 + 0] || _systat[0].counts.net[i*4 + 2]) {
-	    printw("%.10s:  Rx: %s/%s Tx: %s/%s             ",
+	    printw("%8s:  Rx: %s/%s Tx: %s/%s             ",
 		   _netname[i],
 		   showscaledcount(5, _systat[0].deltas.net[i*4 + 0]),
 		   showscaledcount(5, _systat[0].deltas.net[i*4 + 1]),
@@ -1394,7 +1394,7 @@ int usage( int ecode )
 	"Written by Andras Radics to mimic the BSD 2.2 \"% systat -vm\" command.\n"
 	"Linux is Unix.  GNU's Not Unix.\n"
 	"";
-    write((ecode ? 2 : 1), msg, sizeof(msg)-1);
+    fprintf((ecode ? stderr : stdout), "%s", msg);
     exit(ecode);
 }
 
