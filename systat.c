@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.10.3"
+#define VERSION "v0.10.4"
 
 /**
 
@@ -436,15 +436,17 @@ char * _showit( int fieldwidth, ullong val, char *units, ullong bases[] )
 
 char * showmem( int fieldwidth, ullong val )
 {
-    ullong bases[] = { 1024, 1024*1024, 1024*1024*1024, 1024LL*1024*1024*1024 };
-    return _showit(fieldwidth, val, "MGTP", bases);
+    const ullong K = 1024;
+    /* memory is reported in units of 1024 kilobytes, so 1 is 1K and 1024 is 1M */
+    ullong bases[] = { 1, K, K*K, K*K*K, K*K*K*K, K*K*K*K*K, K*K*K*K*K*K, K*K*K*K*K*K*K };
+    return _showit(fieldwidth, val, "KMGTPEZY", bases);
 }
 
 /* typeset a value to fit the field width */
 char * shownum( int fieldwidth, ullong val )
 {
-    ullong bases[] = { 1000, 1000*1000, 1000*1000*1000, (ullong)1e12, (ullong)1e15 };
-    return _showit(fieldwidth, val, "kmgtp", bases);
+    ullong bases[] = { 1000, 1000*1000, (ullong)1e9, (ullong)1e12, (ullong)1e15, (ullong)1e18, (ullong)1e21, (ullong)1e24 };
+    return _showit(fieldwidth, val, "kmgtpezy", bases);
 }
 
 char * showcount( ullong val )
