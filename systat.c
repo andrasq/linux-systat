@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.10.4"
+#define VERSION "v0.10.5"
 
 /**
 
@@ -315,7 +315,7 @@ struct system_stats_s {
         /* network activity */
 	unsigned long long net[lengthof(_netname)*4];   /* eth0 and ppp0 rx/tx byt/pkt */
         /* disk activity */
-	ullong        diskinfo[16][4];	/* seeks, xfers, blks, msps */
+	ullong        diskinfo[16][6];	/* seeks, xfers, blks, msps, rblk, wblk */
     }
     counts;
 
@@ -335,7 +335,7 @@ struct system_stats_s {
 	ullong totintr;
 	ullong intr[100];
 	ullong net[lengthof(_netname)*4];
-	ullong diskinfo[16][4];
+	ullong diskinfo[16][6];
 	ullong memstats[14];
     }
     deltas;
@@ -929,6 +929,8 @@ int gather_stats(long loop_count)
 		_systat[1].counts.diskinfo[ndevs][2] = rd_sec/2 + wr_sec/2;             /* blks */
 		_systat[1].counts.diskinfo[ndevs][3] = (ullong)((ms_rd + ms_wr) / (_INTERVAL * 1000.0) * 100);  /* msps, but track busy% */
                 _systat[1].counts.diskinfo[ndevs][3] = (ullong)(io_ms);
+                _systat[1].counts.diskinfo[ndevs][4] = rd_sec/2;
+                _systat[1].counts.diskinfo[ndevs][5] = wr_sec/2;
 		strncpy(_disknames[ndevs], devnames[i]+1, devnamelengths[i]-2);
 // TODO: track and display kb in / out separately (not just total blks)
 		ndevs += 1;
@@ -948,6 +950,8 @@ int gather_stats(long loop_count)
 		_systat[1].counts.diskinfo[i][0] = a;           // seeks
 		_systat[1].counts.diskinfo[i][1] = b + d;       // xfers
 		_systat[1].counts.diskinfo[i][2] = c + e;       // blks
+		_systat[1].counts.diskinfo[i][4] = c;           // rblk
+		_systat[1].counts.diskinfo[i][5] = e;           // wblk
 	    }
 	    p += n;
 	}
@@ -960,8 +964,10 @@ int gather_stats(long loop_count)
 	if (p) _systat[1].counts.diskinfo[0][1] += strtol(p+8, NULL, 10);
 	p = strstr(buf, "disk_rblk");
 	if (p) _systat[1].counts.diskinfo[0][2] = strtol(p+9, NULL, 10);
+	if (p) _systat[1].counts.diskinfo[0][4] = strtol(p+9, NULL, 10);
 	p = strstr(buf, "disk_wblk");
 	if (p) _systat[1].counts.diskinfo[0][2] += strtol(p+9, NULL, 10);
+	if (p) _systat[1].counts.diskinfo[0][5]  = strtol(p+9, NULL, 10);
     }
 
     /* patch up disknames to make them more legible: abbreviate nvme0n1 to nvme0 */
@@ -1190,7 +1196,7 @@ void delta_stats( )
     }
 
     for (i=0; i<lengthof(_systat[1].counts.diskinfo); i++) {
-	for (j=0; j<4; j++)
+	for (j=0; j<6; j++)
 	    _systat[0].deltas.diskinfo[i][j] =
 		_systat[1].counts.diskinfo[i][j] -
 		_systat[0].counts.diskinfo[i][j];
@@ -1371,8 +1377,12 @@ int show_stats( )
     mvprintw(r+0, 0, "Disks");
     mvprintw(r+1, 0, "  tps");
     mvprintw(r+2, 0, "xfers");
-    mvprintw(r+3, 0, " blks");
-    mvprintw(r+4, 0, "%busy");
+    // mvprintw(r+3, 0, " blks");
+    // mvprintw(r+4, 0, "%busy");
+    // separate blks read/written
+    mvprintw(r+3, 0, " rblk");
+    mvprintw(r+4, 0, " wblk");
+    mvprintw(r+5, 0, "%busy");
     // for each block device, print 4 stats (show as many devices as can fit, 16 max)
     n = (PAGER_COL - 6) / 6 ;
     if (DISKS_ROW >= 18) n += 2;
@@ -1384,8 +1394,11 @@ int show_stats( )
             mvprintw(r+0, 6+6*coli, "%6s", _disknames[i]);
             mvprintw(r+1, 6+6*coli, "%6.6s", shownum(5, _systat[0].deltas.diskinfo[i][0]));     // tps
             mvprintw(r+2, 6+6*coli, "%6.6s", shownum(5, _systat[0].deltas.diskinfo[i][1]));     // xfers
-            mvprintw(r+3, 6+6*coli, "%6.6s", showmem(5, _systat[0].deltas.diskinfo[i][2]));     // blocks
-            mvprintw(r+4, 6+6*coli, "%6.6s", showfloat(6, _systat[0].deltas.diskinfo[i][3] / (_INTERVAL * 1000) * 100));        // %busy
+            // mvprintw(r+3, 6+6*coli, "%6.6s", showmem(5, _systat[0].deltas.diskinfo[i][2]));     // blocks
+            // mvprintw(r+4, 6+6*coli, "%6.6s", showfloat(6, _systat[0].deltas.diskinfo[i][3] / (_INTERVAL * 1000) * 100));        // %busy
+            mvprintw(r+3, 6+6*coli, "%6.6s", showmem(5, _systat[0].deltas.diskinfo[i][4]));     // rblk
+            mvprintw(r+4, 6+6*coli, "%6.6s", showmem(5, _systat[0].deltas.diskinfo[i][5]));     // wblk
+            mvprintw(r+5, 6+6*coli, "%6.6s", showfloat(6, _systat[0].deltas.diskinfo[i][3] / (_INTERVAL * 1000) * 100));        // %busy
             ++coli;
         }
     }
