@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.10.5"
+#define VERSION "v0.10.6"
 
 /**
 
@@ -32,7 +32,7 @@ AR: 0.9.0 todo changes:
 2020-04-18:
 - systat: add sysinfo: num cores, total dram, total swap, num cores, avg core mhz (read from /proc/cpuinfo)
 - systat: add "Tot" row to mem: tot REAL (phys dram installed), tot VIRTUAL (swap installed)
-- systat: scale REAL/VIRTUAL mem sooner, eg no more than 3.1 digits before switching units (KB -> MB -> GB -> TB)
+- systat: scale REAL/VIRTUAL mem sooner, eg no more than 3.1 digits before switching units (KB -> MB -> GB -> TB -> PB -> EB)
 + combine nvme%dq%d interrupts (two ssds have 16 total)
 - combine eth%d-rx-%d and eth%d-tx-%d interrupts (2 each)
 + combine xhci_hcd interrupts (2 identically named)
@@ -876,10 +876,12 @@ int gather_stats(long loop_count)
 	    " hda ", " hdb ", " hdc ", " hdd ", " hde ", " hdf ",
 	    " vda ", " vdb ", " vdc ", " vdd ", " vde ", " vdf ",
 	    " sda ", " sdb ", " sdc ", " sdd ", " sde ", " sdf ",
+            " md0 ", " md1 ", " md2 ", " md3 ",
             " xvda ", " xvdh ",
             " dm-0 ", " dm-1 ", " dm-2 ", " dm-3 ",
 	    " sr0 ", " sr1 ", " sr2 ", " sr3 ",
-	    " sde ", " sdf ", " sdg ", " sdh ", " sdi ",
+	    " sdg ", " sdh ", " sdi ", " sdj ", " sdk ", " sdl ",
+	    " sr4 ", " sr5 ", " sr6 ", " sr7 ",
 	    NULL };
         static int devnamelengths[lengthof(devnames)] = { 0 };
         if (devnamelengths[0] == 0) {
@@ -927,7 +929,7 @@ int gather_stats(long loop_count)
 		_systat[1].counts.diskinfo[ndevs][0] = nmrd + nmwr + rd_mrg + wr_mrg;   /* num reads+writes, proxy for tps */
 		_systat[1].counts.diskinfo[ndevs][1] = nmrd + nmwr;                     /* xfers */
 		_systat[1].counts.diskinfo[ndevs][2] = rd_sec/2 + wr_sec/2;             /* blks */
-		_systat[1].counts.diskinfo[ndevs][3] = (ullong)((ms_rd + ms_wr) / (_INTERVAL * 1000.0) * 100);  /* msps, but track busy% */
+		// _systat[1].counts.diskinfo[ndevs][3] = (ullong)((ms_rd + ms_wr) / (_INTERVAL * 1000.0) * 100);  /* msps, but track busy% */
                 _systat[1].counts.diskinfo[ndevs][3] = (ullong)(io_ms);
                 _systat[1].counts.diskinfo[ndevs][4] = rd_sec/2;
                 _systat[1].counts.diskinfo[ndevs][5] = wr_sec/2;
