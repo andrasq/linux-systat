@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.10.10"
+#define VERSION "v0.10.11"
 
 /**
 
@@ -236,6 +236,8 @@ ullong scan_ullong( char *buf, char *patt ) {
 static ulong _linuxver;		/* set by gather_version(), called from main */
 int _pagesize = 4096;		/* set by main */
 int _pageKB = 4;                /* set by main */
+time_t _btime = 0;
+double _exec_start_delta = 0.0;
 
 static WINDOW *_win;		/* initialized by main */
 
@@ -495,6 +497,8 @@ int readfile( const char *filename, void *buf, int nbytes )
     return nb;
 }
 
+// TODO: int tailfile( const char *filename, void *buf, int nbytes )
+
 char * startofline( char *buf, char *p ) {
     if (!p) return p;
     while (p > buf && *p != '\n') p--;
@@ -540,6 +544,38 @@ int gather_version( )
     return _linuxver;
 }
 
+// return the timestamp when the system says it booted
+double getbtime( )
+{
+    unsigned long btime;
+    char *p, buf[40000];
+
+    readfile("/proc/stat", buf, sizeof(buf));
+    p = strstr(buf, "btime ");
+    if (p) btime = strtoul(p+6, NULL, 10);
+
+    return (time_t) btime;
+}
+
+// Return the ms offset between exec_start and the actual uptime.
+// Call when this program starts running
+// Linux can drift, possibly when suspended/hibernated.
+unsigned long long get_exec_drift( unsigned long btime )
+{
+    double now = fptime();
+    double delta = 0.0;
+    char buf[1000], *p;
+    char fname[100];
+    snprintf(fname, sizeof(fname), "/proc/%d/sched", getpid());
+    if (readfile(fname, buf, sizeof(buf)) > 0) {
+        double start;
+        p = strstr(buf, "se.exec_start");
+        if (p) start = scan_ullong(p+10, ":") / 1000;
+        delta = now - (btime + start);
+    }
+    return delta;
+}
+
 unsigned char _pops[4] = {0, 1, 1, 2};
 int popcount(unsigned char *bitbuf, int size) {
     int i, count = 0;
@@ -552,7 +588,7 @@ int popcount(unsigned char *bitbuf, int size) {
 
 int gather_stats(long loop_count)
 {
-    ullong btime = 0;
+    time_t btime = _btime;
     // 8c/16t /proc/cpuinfo is 24k, size buf
     char *p, *q, buf[100000], fname[80], *nextp, *nextw;
     ullong i, j, n;
@@ -792,8 +828,6 @@ int gather_stats(long loop_count)
     }
 
     readfile("/proc/stat", buf, sizeof(buf));
-    p = strstr(buf, "btime ");
-    btime = strtoul(p+6, NULL, 10);
     p = strstr(buf, "cpu ");
     if (_linuxver >= 2006011) {
         // have available iowait, steal
@@ -1020,6 +1054,7 @@ int gather_stats(long loop_count)
 		char fname[200];
 		ullong n, nn[10];
 		unsigned long pgsz = getpagesize() / 1024;
+                double last_active;
                 int is_active = 0;
 
                 /* /proc/%d/sched contains "se.exec_start   :   12345678.012"
@@ -1032,9 +1067,8 @@ int gather_stats(long loop_count)
                     time(&now);
                     n = scan_ullong(p+10, ":");
                     // FreeBSD defines "active" as having run in the last 20 seconds.
-                    // Note that the proc /sched timestamps are all older than now - 14,
-                    // so now - 20 really finds those having run in the last 6 seconds.
-                    is_active = btime + n/1000 >= now - 20;
+                    last_active = btime + _exec_start_delta + n/1000;
+                    is_active = last_active >= now - 20;
                 }
 
 		n = 0;
@@ -1522,6 +1556,8 @@ int main( int ac, char *av[] )
     _linuxver = gather_version();
     _pagesize = getpagesize();
     _pageKB = _pagesize / 1024;
+    _btime = getbtime();
+    _exec_start_delta = get_exec_drift(_btime);
 
     _win = initscr();
     if (!_win) die(2);
