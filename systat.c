@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.10.8"
+#define VERSION "v0.10.9"
 
 /**
 
@@ -654,11 +654,12 @@ int gather_stats(long loop_count)
                 tmpbuf[0] = '\0';
                 int nchars = 5;
                 yeslong = strcmp(_intrnames[i], "xhci_hcd") == 0 && (nchars = 8) ||
+                    strcmp(_intrnames[i], "ioat-msix") == 0 && (nchars = 9) ||
                     sscanf(_intrnames[i], "nvme%ldq%ld", &n, &m) == 2 && (nchars = 5) ||
                     sscanf(_intrnames[i], "megasas%ld-msix%ld", &n, &m) == 2 && (nchars = 7) ||
                     sscanf(_intrnames[i], "eno%ld-TxRx-%ld", &n, &m) == 2 && (nchars = 3) ||
                     sscanf(_intrnames[i], "virtio%ld", &n) == 1 && (nchars = 7) ||
-                    sscanf(_intrnames[i], "eth%ld-TxRx-%ld", &n, &m) == 2 && (nchars = 7) ||
+                    sscanf(_intrnames[i], "eth%ld-TxRx-%ld", &n, &m) == 2 && (nchars = 9) ||
                     sscanf(_intrnames[i], "mpt3sas%ld-msix%ld", &n, &m) == 1 && (nchars = 8);
                 if (yeslong && strncmp(_intrnames[i], _intrnames[i-1], nchars) == 0) {
                     if (count > 0) {
