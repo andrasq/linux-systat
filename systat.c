@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.10.9"
+#define VERSION "v0.10.10"
 
 /**
 
@@ -215,6 +215,7 @@ Free: count of pages on the free list.
 #include <utmp.h>
 #include <sys/ioctl.h>
 #include <signal.h>
+#include <math.h>
 
 #include <asm/param.h>  // HZ
 
@@ -398,7 +399,7 @@ char *iscale( unsigned long long value, int wid, struct scaletab *fmt )
 #endif
 
 /* render the value val into exactly fieldwidth chars */
-char * _showit( int fieldwidth, ullong val, char *units, ullong bases[] )
+char * _showit( int fieldwidth, int frac, ullong val, char *units, ullong bases[] )
 {
     static char bufs[16][100] = { 0 };
     static int bufid = 0;
@@ -419,9 +420,13 @@ char * _showit( int fieldwidth, ullong val, char *units, ullong bases[] )
 
     /* try to fit field overflow by changing the units */
     /* NB: sometimes ***** is better than 178M (expecting 178423) */
-    for (p = units; *p && strlen(buf) > fieldwidth; p++, bases++) {
-	snprintf(buf, sizeof(*bufs), "%*llu%c",
-		 fieldwidth-1, (val + *bases/2) / *bases, *p);
+    for (p = units; *p && (strlen(buf) > fieldwidth || (frac > 0 && (val / *bases > 10000))); p++, bases++) {
+        // TODO: test fit numerically not with strlen
+        if (frac) {
+            snprintf(buf, sizeof(*bufs), "%*.*f%c", fieldwidth-1, frac, (double)(val) / *bases, *p);
+        } else {
+            snprintf(buf, sizeof(*bufs), "%*llu%c", fieldwidth-1, (val + *bases/2) / *bases, *p);
+        }
     }
 
     /* if still overflow, map to '****' */
@@ -439,14 +444,15 @@ char * showmem( int fieldwidth, ullong val )
     const ullong K = 1024;
     /* memory is reported in units of 1024 kilobytes, so 1 is 1K and 1024 is 1M */
     ullong bases[] = { 1, K, K*K, K*K*K, K*K*K*K, K*K*K*K*K, K*K*K*K*K*K, K*K*K*K*K*K*K };
-    return _showit(fieldwidth, val, "KMGTPEZY", bases);
+    // FIXME: Y not representable in 64 bits
+    return _showit(fieldwidth, 2, val, "KMGTPEZ", bases);
 }
 
 /* typeset a value to fit the field width */
 char * shownum( int fieldwidth, ullong val )
 {
     ullong bases[] = { 1000, 1000*1000, (ullong)1e9, (ullong)1e12, (ullong)1e15, (ullong)1e18, (ullong)1e21, (ullong)1e24 };
-    return _showit(fieldwidth, val, "kmgtpezy", bases);
+    return _showit(fieldwidth, 0, val, "kmgtpezy", bases);
 }
 
 char * showcount( ullong val )
@@ -1253,10 +1259,10 @@ int show_stats( )
 	   showmem(6, _systat[0].counts.memfree));
     move(5,0);
     printw("All %7s %7s  %7s  %7s          in kb",
-	   showmem(6, _systat[0].counts.meminfo[1][0][0]),
-	   showmem(6, _systat[0].counts.meminfo[1][0][1]),
-	   showmem(6, _systat[0].counts.meminfo[1][1][0]),
-	   showmem(6, _systat[0].counts.meminfo[1][1][1]));
+	   showmem(7, _systat[0].counts.meminfo[1][0][0]),
+	   showmem(7, _systat[0].counts.meminfo[1][0][1]),
+	   showmem(7, _systat[0].counts.meminfo[1][1][0]),
+	   showmem(7, _systat[0].counts.meminfo[1][1][1]));
 
     /* process stats */
     // was: mvprintw(7, 0, "Proc:r  p  d  s  w   Csw  Trp   Sys  Int  Sof  Flt");
