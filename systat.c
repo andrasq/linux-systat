@@ -968,7 +968,7 @@ int gather_stats(long loop_count)
 //		sscanf(p+devnamelengths[i], "%*u, %llu, %llu", &nmrd, &rd_sec);
 
 		_systat[1].counts.diskinfo[ndevs][0] = nmrd + nmwr + rd_mrg + wr_mrg;   /* num reads+writes, proxy for tps */
-		_systat[1].counts.diskinfo[ndevs][1] = nmrd + nmwr;                     /* xfers */
+		_systat[1].counts.diskinfo[ndevs][1] = nmrd + nmwr;                     /* xfers (after r/w merges) */
 		_systat[1].counts.diskinfo[ndevs][2] = rd_sec/2 + wr_sec/2;             /* blks */
 		// _systat[1].counts.diskinfo[ndevs][3] = (ullong)((ms_rd + ms_wr) / (_INTERVAL * 1000.0) * 100);  /* msps, but track busy% */
                 _systat[1].counts.diskinfo[ndevs][3] = (ullong)(io_ms);
@@ -1138,8 +1138,9 @@ int gather_stats(long loop_count)
                     _systat[1].counts.meminfo[1][0][0] += nn[1] * pgsz; /* rss */
                     _systat[1].counts.meminfo[1][1][0] += nn[0] * pgsz; /* vmsz */
                     _systat[1].counts.meminfo[1][1][1] += nn[2] * pgsz; /* shrd */
-                    if (nn[1] == 0) {
-                        /* process is swapped out */
+                    // kernel processes read "0 0 0 0 0 0 0"
+                    if (nn[1] == 0 && nn[0] > 0) {
+                        /* rss = 0 but vmsz > 0: process is swapped out */
                         _systat[1].counts.procs[3] -= 1;	/* -S sleeping */
                         _systat[1].counts.procs[4] += 1;	/* +W swapped out */
                     }
@@ -1307,7 +1308,7 @@ int show_stats( )
     mvprintw(8, 10, "%s", shownum(4, _systat[0].counts.procs[2]));
     mvprintw(8, 14, "%s", shownum(4, _systat[0].counts.procs[3]));
     mvprintw(8, 18, "%s", shownum(4, _systat[0].counts.procs[4]));
-    mvprintw(8, 22, "%s", shownum(5, _systat[0].deltas.ctxt[0]));
+    mvprintw(8, 22, "%5s", shownum(4, _systat[0].deltas.ctxt[0]));
     mvprintw(8, 28, "%s", shownum(4, 0));	// traps, overwritten with New
     //mvprintw(8, 30, "%s", shownum(5, 0));	// syscalls, omit (not tracked)
     mvprintw(8, 33, "%s", shownum(4, _systat[0].deltas.totintr));
