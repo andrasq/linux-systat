@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.10.6"
+#define VERSION "v0.10.7"
 
 /**
 
@@ -648,20 +648,18 @@ int gather_stats(long loop_count)
 
             _systat[1].counts.intr[i] = count;
 
-            /* collapse many-valued interrupts, eg 8 nvme0q0 */
+            /* collapse many-valued interrupts, eg 8 nvme0q0, q1, q2, ... */
             if (i > 0) {
-                char tmpbuf[2000], found = 0, yeslong;
+                char tmpbuf[2000], yeslong;
                 tmpbuf[0] = '\0';
-                yeslong = sscanf(_intrnames[i], "nvme%ldq%ld", &n, &m) == 2 ||
-                    sscanf(_intrnames[i], "megasas%ld-msix%ld", &n, &m) ||
-                    sscanf(_intrnames[i], "eno%ld-TxRx-%ld", &n, &m) ||
-                    sscanf(_intrnames[i], "mpt3sas%ld-msix%ld", &n, &m);
-                if ((yeslong && strncmp(_intrnames[i], _intrnames[i-1], 5) == 0) ||
-                    (strcmp(_intrnames[i], "xhci_hcd") == 0 && strcmp(_intrnames[i-1], "xhci_hcd") == 0))
-                {
-                    found = 1;
-                }
-                if (found) {
+                int nchars = 5;
+                yeslong = strcmp(_intrnames[i], "xhci_hcd") == 0 && (nchars = 8) ||
+                    sscanf(_intrnames[i], "nvme%ldq%ld", &n, &m) == 2 && (nchars = 5) ||
+                    sscanf(_intrnames[i], "megasas%ld-msix%ld", &n, &m) == 2 && (nchars = 7) ||
+                    sscanf(_intrnames[i], "eno%ld-TxRx-%ld", &n, &m) == 2 && (nchars = 3) ||
+                    sscanf(_intrnames[i], "virtio%ld", &n) == 1 && (nchars = 7) ||
+                    sscanf(_intrnames[i], "mpt3sas%ld-msix%ld", &n, &m) == 1 && (nchars = 8);
+                if (yeslong && strncmp(_intrnames[i], _intrnames[i-1], nchars) == 0) {
                     if (count > 0) {
                         snprintf(tmpbuf, sizeof(tmpbuf), "%s%s", _intrnums[i-1], num);
                         snprintf(_intrnums[i-1], sizeof(*_intrnums), "%s", tmpbuf);
