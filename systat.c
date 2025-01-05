@@ -367,38 +367,60 @@ static void fpsleep( double pause )
     sleep(tv.tv_sec);
 }
 
-#if 0
 struct scaletab {
-    unsigned long long following;
+    unsigned long long bound;
     double scale;
     const char *fmt;
 };
 char *iscale( unsigned long long value, int wid, struct scaletab *fmt )
 {
+    static char bufs[16][100] = { 0 };
+    static int bufid = 0;
     static struct scaletab _myfmt[] = {
-	{ 0, 0, "%5.0f" },			/* 12345 => 12345 */
-	{ 100000, 1000.0, "%5.1fk" },		/* 123456 => 123.5k */
-	{ 1000000, 1000.0, "%5.0fk" },		/* 12345678 => 12346k */
-	{ 100000000, 1000000.0, "%5.1fm" },	/* 123456789 => 123.5m */
-	{ 1000000000, 1000000.0, "%5.0fm" },	/* 1234567890 => 1235m */
+        // TODO: maybe scale to maintain eg 4 digits precision
+	{ 10000, 1, "%*.*lf" },			/* 4567 => 4567 */
+	{ 1000000, 1e3, "%*.*lfk" },		/* 45678 => 45.7k */
+	{ 1000000000, 1e6, "%*.*lfm" },		/* 4567890 => 4.57m */
+	{ 1000000000000, 1e9, "%*.*lfg" },	/* 4567890000 => 4.57g */
+	{ 1000000000000000, 1e12, "%*.*lft" },	/* 4567890000000 => 4.57t */
+	{ 1000000000000000000, 1e15, "%*.*lfp" },
 	{ 0, 0, 0 }
     };
-    static char buf[40];
+    char valbuf[40];
+    char *buf;
     double v;
-    int n, i;
+    int fi;
+    /* drop decimals if tight on space */
+    int decimals = wid >= 6 ? 2 : wid >= 5 ? 1 : 0;
+    int fw;
+
+    /* avoid overwriting same buf so can compose multi-value lines */
+    buf = bufs[bufid++];
+    if (bufid >= lengthof(bufs)) bufid = 0;
 
     if (!fmt) fmt = _myfmt;
+    fi = 0;
 
     /* find the appropriate scale to use */
-    while (value > (fmt+1)->following)
-	++fmt;
-    v = (fmt->scale != 0.0 ? (double)value * fmt->scale : (double)value);
+    while (value >= fmt[fi].bound && fmt[fi+1].fmt) {
+        fi++;
+    }
 
-    sprintf(buf, fmt->fmt, v);
+    /* do not show .00 decimals for integer values */
+    v = value / fmt[fi].scale;
+    if (v == (long long)v) decimals = 0;
+
+    /* use the full width, but leave room for the units letter */
+    fw = wid;
+    if (fi > 0) fw -= 1;
+
+    sprintf(buf, fmt[fi].fmt, fw, decimals, value / fmt[fi].scale);
+
+    /* use blanks for zeroes, much easier to scan visually */
+    if (value == 0) buf[wid - 1] = ' ';
 
     return buf;
 }
-#endif
 
 /* render the value val into exactly fieldwidth chars */
 char * _showit( int fieldwidth, int frac, ullong val, char *units, ullong bases[] )
