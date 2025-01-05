@@ -8,7 +8,7 @@ Usage: `systat [interval]`
 
 To build, check out repo and
 
-    cc -Os -o systat systat.c -lncurses
+    cc -Os -o systat systat.c -lncurses -lm
     sudo install ./systat /usr/local/bin/
 
 

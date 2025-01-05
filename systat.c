@@ -1,6 +1,6 @@
 /*
  * systat -- BSD-like systat(1) for Linux
- * Copyright (C) 2007-2023 Andras Radics
+ * Copyright (C) 2007-2025 Andras Radics
  *
  * Licensed under the Apache License, Version 2.0
  */
@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.10.11"
+#define VERSION "v0.10.12"
 
 /**
 
@@ -1016,7 +1016,7 @@ int gather_stats(long loop_count)
     /* patch up disknames to make them more legible: abbreviate nvme0n1 to nvme0 */
     for (i=0; i<sizeof(_disknames); i++) {
         int n, m;
-        if (sscanf(_disknames[i], "nvme%dn%d", &n, &m) == 2) {
+        if (sscanf(_disknames[i], "nvme%dn%d", &n, &m) == 2 && m == 1) {
             sprintf(_disknames[i], "nvme%d", n /*, m*/);
         }
     }
@@ -1085,12 +1085,13 @@ int gather_stats(long loop_count)
 		 * ...however, status fields seem ok... */
 
 		/* sum up vss, rss, minor faults, major faults, run-state */
-		/* swapped out if rss == 0 */
+		/* swapped out if rss == 0 and vmsz > 0 (kernel threads are all rss == 0 and vmsz == 0) */
 		s = buf;
 		/* skip to the third word in the status line, RSDZT status */
 		for (i=0; i<3; i++)
 		    p = strsep(&s, " \t");
                 switch (*p) {
+                // FIXME: /proc/*/status shows better IRST status?
 		case 'R':
 		    /* currently running */
 		    _systat[1].counts.procs[0] += 1;    // r running
