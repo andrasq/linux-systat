@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.10.12"
+#define VERSION "v0.10.13"
 
 /**
 
@@ -216,6 +216,7 @@ Free: count of pages on the free list.
 #include <sys/ioctl.h>
 #include <signal.h>
 #include <math.h>
+#include <ctype.h>
 
 #include <asm/param.h>  // HZ
 
@@ -430,6 +431,7 @@ char * _showit( int fieldwidth, int frac, ullong val, char *units, ullong bases[
 
     /* rotate through 16 buffers to allow multiple _showit() in a single printw */
     char *p;
+    ullong b;
     char *buf = bufs[bufid++];
     if (bufid >= lengthof(bufs)) bufid = 0;
 
@@ -443,18 +445,27 @@ char * _showit( int fieldwidth, int frac, ullong val, char *units, ullong bases[
     snprintf(buf, sizeof(*bufs), "%*llu", fieldwidth, val);
 
     /* try to fit field overflow by changing the units */
-    /* NB: sometimes ***** is better than 178M (expecting 178423) */
-    for (p = units; *p && (strlen(buf) > fieldwidth || (frac > 0 && (val / *bases > 10000))); p++, bases++) {
+    /* if decimals are allowed do not typeset more than 4 digits */
+    for (p = units, b = *bases; *p && (strlen(buf) > fieldwidth || (frac > 0 && (val/b >= 10000))); p++, b = *++bases) {
         // TODO: test fit numerically not with strlen
         if (frac) {
-            snprintf(buf, sizeof(*bufs), "%*.*f%c", fieldwidth-1, frac, (double)(val) / *bases, *p);
+            snprintf(buf, sizeof(*bufs), "%*.*f%c", fieldwidth-1, frac, (double)(val)/b, *p);
+            if (strlen(buf) > fieldwidth && fieldwidth - frac <= 4) {
+                /* if the decimals don't fit, try to omit the decimals */
+                /* beware the degenerate case of never fits thus typesets 0E */
+                int toomany = strlen(buf) - fieldwidth;
+                if (toomany <= frac && (val/b < 10000 || !*(p+1))) {
+                    snprintf(buf, sizeof(*bufs), "%*.*f%c", fieldwidth-1, frac - toomany, (double)(val) / b, *p);
+                }
+            }
         } else {
-            snprintf(buf, sizeof(*bufs), "%*llu%c", fieldwidth-1, (val + *bases/2) / *bases, *p);
+            snprintf(buf, sizeof(*bufs), "%*llu%c", fieldwidth-1, (val + b/2) / b, *p);
         }
     }
 
     /* if still overflow, map to '****' */
-    if (strlen(buf) > fieldwidth) {
+    /* sometimes ***** is better than 178M (expecting 178423), and definitely better than 0E */
+    if (strlen(buf) > fieldwidth || (buf[0] == '0' && !isdigit(buf[1]) && !buf[2])) {
 	memset(buf, '*', fieldwidth);
         buf[0] = ' ';
         buf[fieldwidth] = '\0';
