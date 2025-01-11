@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.10.13"
+#define VERSION "v0.10.14"
 
 /**
 
@@ -30,11 +30,11 @@ AR: 0.9.0 todo changes:
 + if space available, spread out the process counts (3 ch / col is not enough)
 - should change all "unsigned long" to "ullong" to for 64 bits of stats
 2020-04-18:
-- systat: add sysinfo: num cores, total dram, total swap, num cores, avg core mhz (read from /proc/cpuinfo)
++ systat: add sysinfo: num cores, total dram, total swap, num cores, avg core mhz (read from /proc/cpuinfo)
 - systat: add "Tot" row to mem: tot REAL (phys dram installed), tot VIRTUAL (swap installed)
-- systat: scale REAL/VIRTUAL mem sooner, eg no more than 3.1 digits before switching units (KB -> MB -> GB -> TB -> PB -> EB)
++ systat: scale REAL/VIRTUAL mem sooner, eg no more than 3.1 digits before switching units (KB -> MB -> GB -> TB -> PB -> EB)
 + combine nvme%dq%d interrupts (two ssds have 16 total)
-- combine eth%d-rx-%d and eth%d-tx-%d interrupts (2 each)
++ combine eth%d-rx-%d and eth%d-tx-%d interrupts (2 each)
 + combine xhci_hcd interrupts (2 identically named)
 
 **/
@@ -733,7 +733,8 @@ int gather_stats(long loop_count)
                     strcmp(_intrnames[i], "ioat-msix") == 0 && (nchars = 9) ||
                     sscanf(_intrnames[i], "nvme%ldq%ld", &n, &m) == 2 && (nchars = 5) ||
                     sscanf(_intrnames[i], "megasas%ld-msix%ld", &n, &m) == 2 && (nchars = 7) ||
-                    sscanf(_intrnames[i], "eno%ld-TxRx-%ld", &n, &m) == 2 && (nchars = 3) ||
+                    sscanf(_intrnames[i], "eno%ld-TxRx-%ld", &n, &m) == 2 && (nchars = 4) ||
+                    sscanf(_intrnames[i], "ens%ld-Tx-Rx-%ld", &n, &m) == 2 && (nchars = 4) ||
                     sscanf(_intrnames[i], "virtio%ld", &n) == 1 && (nchars = 7) ||
                     sscanf(_intrnames[i], "eth%ld-TxRx-%ld", &n, &m) == 2 && (nchars = 9) ||
                     sscanf(_intrnames[i], "mpt3sas%ld-msix%ld", &n, &m) == 1 && (nchars = 8);
