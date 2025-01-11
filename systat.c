@@ -239,8 +239,8 @@ ullong scan_ullong( char *buf, char *patt ) {
 
 static ulong _linuxver;		/* set by gather_version(), called from main */
 int _pageKB = 4;                /* set by main */
-time_t _btime = 0;
-double _exec_start_delta = 0.0;
+time_t _btime = 0;              /* set by main */
+double _exec_start_delta = 0.0; /* computed by main */
 
 static WINDOW *_win;		/* initialized by main */
 
@@ -345,8 +345,8 @@ struct system_stats_s {
 	ullong memstats[14];
     }
     deltas;
-}
-_systat[2];
+};
+struct system_stats_s _systat[2];
 
 
 /* current time as a float */
@@ -628,7 +628,7 @@ int gather_stats(long loop_count)
     _systat[0] = _systat[1];
     memset(&_systat[1], 0, sizeof(_systat[1]));
 
-    _systat[1].counts.date = time(NULL);
+    _systat[1].counts.date = (time_t) now;
     _systat[1].counts.ms = 1000 * (now - (ullong)now);
 
     /* syscmdl(NULL, NULL, buf, sizeof(buf),
@@ -1079,7 +1079,7 @@ int gather_stats(long loop_count)
 	while ((de = readdir(dp)) != NULL) {
 	    char *s, *p;
 	    int e, i;
-            time_t now;
+            double now;
 	    if (strchr("0123456789", de->d_name[0])) {
 		char fname[200];
 		ullong n, nn[10];
@@ -1094,7 +1094,7 @@ int gather_stats(long loop_count)
                 e = readfile(fname, buf, sizeof(buf));
                 if (e >= 0) {
                     p = strstr(buf, "se.exec_start");
-                    time(&now);
+                    now = fptime();
                     n = scan_ullong(p+10, ":");
                     // FreeBSD defines "active" as having run in the last 20 seconds.
                     last_active = btime + _exec_start_delta + n/1000;
