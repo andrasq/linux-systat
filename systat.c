@@ -17,7 +17,7 @@
 AR: 0.9.0 todo changes:
 + include iowait, steal time
 + fill out daefr, react etc (with kswapd?)
-- size info to window
++ size info to window
 + anchor right two columns to right edge
 + define PAGER_COL and float it with right margin (until all drives and cpu fields
   have been exposed, then leave it)
@@ -31,11 +31,14 @@ AR: 0.9.0 todo changes:
 - should change all "unsigned long" to "ullong" to for 64 bits of stats
 2020-04-18:
 + systat: add sysinfo: num cores, total dram, total swap, num cores, avg core mhz (read from /proc/cpuinfo)
-- systat: add "Tot" row to mem: tot REAL (phys dram installed), tot VIRTUAL (swap installed)
++ systat: add "Tot" row to mem: tot REAL (phys dram installed), tot VIRTUAL (swap installed)
 + systat: scale REAL/VIRTUAL mem sooner, eg no more than 3.1 digits before switching units (KB -> MB -> GB -> TB -> PB -> EB)
 + combine nvme%dq%d interrupts (two ssds have 16 total)
 + combine eth%d-rx-%d and eth%d-tx-%d interrupts (2 each)
 + combine xhci_hcd interrupts (2 identically named)
+2025-01-11
+- fix occasional crash (w very large values?)
+- maybe support ' ' to refresh immediately (and correctly scale the period denominator)
 
 **/
 
@@ -235,7 +238,6 @@ ullong scan_ullong( char *buf, char *patt ) {
 }
 
 static ulong _linuxver;		/* set by gather_version(), called from main */
-int _pagesize = 4096;		/* set by main */
 int _pageKB = 4;                /* set by main */
 time_t _btime = 0;
 double _exec_start_delta = 0.0;
@@ -474,6 +476,7 @@ char * _showit( int fieldwidth, int frac, ullong val, char *units, ullong bases[
     return buf;
 }
 
+/* typeset a value to fit the field width, scale by powers of 1024 */
 char * showmem( int fieldwidth, ullong val )
 {
     const ullong K = 1024;
@@ -483,20 +486,12 @@ char * showmem( int fieldwidth, ullong val )
     return _showit(fieldwidth, 2, val, "KMGTPE", bases);
 }
 
-/* typeset a value to fit the field width */
+/* typeset a value to fit the field width, scale by powers of 1000 */
 char * shownum( int fieldwidth, ullong val )
 {
     // FIXME: z, y not representable in 64 bits
     ullong bases[] = { 1000, 1000*1000, (ullong)1e9, (ullong)1e12, (ullong)1e15, (ullong)1e18 };
     return _showit(fieldwidth, 0, val, "kmgtpe", bases);
-}
-
-char * showcount( ullong val )
-{
-    if (!val) return "0";
-    char *p = shownum(20, val);
-    while (*p == ' ') p++;
-    return p;
 }
 
 char * showscaledcount( int fieldwidth, ullong val )
@@ -1590,8 +1585,7 @@ int main( int ac, char *av[] )
 // FIXME: long intervals do not work as expected (5 sec, 50 sec)
     _INTERVAL = pause;
     _linuxver = gather_version();
-    _pagesize = getpagesize();
-    _pageKB = _pagesize / 1024;
+    _pageKB = getpagesize() / 1024;
     _btime = getbtime();
     _exec_start_delta = get_exec_drift(_btime);
 
