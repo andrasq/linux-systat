@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.10.14"
+#define VERSION "v0.10.15"
 
 /**
 
@@ -479,9 +479,9 @@ char * _showit( int fieldwidth, int frac, ullong val, char *units, ullong bases[
 /* typeset a value to fit the field width, scale by powers of 1024 */
 char * showmem( int fieldwidth, ullong val )
 {
-    const ullong K = 1024;
     /* memory is reported in units of 1024 kilobytes, so 1 is 1K and 1024 is 1M */
-    ullong bases[] = { 1, K, K*K, K*K*K, K*K*K*K, K*K*K*K*K, K*K*K*K*K*K };
+    const ullong K = 1024, M = K*K, G = M*K, T = G*K, P = T*K, E = P*K;
+    ullong bases[] = { 1, K, M, G, T, P, E };
     // FIXME: Z, Y not representable in 64 bits
     return _showit(fieldwidth, 2, val, "KMGTPE", bases);
 }
@@ -489,8 +489,9 @@ char * showmem( int fieldwidth, ullong val )
 /* typeset a value to fit the field width, scale by powers of 1000 */
 char * shownum( int fieldwidth, ullong val )
 {
+    const ullong k = 1024, m = k*k, g = m*k, t = g*k, p = t*k, e = p*k;
+    ullong bases[] = { 1, k, m, g, t, p, e };
     // FIXME: z, y not representable in 64 bits
-    ullong bases[] = { 1000, 1000*1000, (ullong)1e9, (ullong)1e12, (ullong)1e15, (ullong)1e18 };
     return _showit(fieldwidth, 0, val, "kmgtpe", bases);
 }
 
@@ -1507,7 +1508,7 @@ int usage( int ecode )
 {
     static char msg[] =
 	"systat " VERSION " -- BSD-style display of system activity\n"
-	"usage: systat [delay]\n"
+	"usage: systat [interval]\n"
 	"\n"
 	"Options:\n"
 	"  -h    show this message\n"
