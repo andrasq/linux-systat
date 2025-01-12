@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.11.1"
+#define VERSION "v0.12.0"
 
 /**
 
@@ -38,8 +38,8 @@ AR: 0.9.0 todo changes:
 + combine xhci_hcd interrupts (2 identically named)
 2025-01-11
 - fix occasional crash (w very large values?)
-- maybe support ' ' spacebar to refresh immediately (and correctly scale the time period denominator)
-- very first set of stats are divided by the sampling interval, should show them as absolute
++ maybe support ' ' spacebar to refresh immediately (and correctly scale the time period denominator)
++ very first set of stats are divided by the sampling interval, should show them as absolute
 - if window is small, network devices overwrite top disks rows
 
 **/
@@ -256,6 +256,7 @@ static char _nnet = 0;
 #define lengthof( arr )         ( sizeof(arr) / sizeof(*(arr)) )
 
 double _INTERVAL = 0;
+double _LAST_SAMPLE = 0;
 int PAGER_COL = 50;
 int INTR_COL = 50 + 13;
 int DISKS_ROW = 18;
@@ -988,6 +989,7 @@ int gather_stats(long loop_count)
 	    nwrites, ??nwrites_merged??, nsect_written, ms_write,
 	    num_ios_in_progress, num_ms_for_ios, total_ms_for_io
 	 */
+	double interval = now - _LAST_SAMPLE;
 	for (i=0; devnames[i] && ndevs<lengthof(_systat[1].counts.diskinfo); i++) {
 	    p = strstr(buf, devnames[i]);
 	    if (p) {
@@ -1018,7 +1020,7 @@ int gather_stats(long loop_count)
 		_systat[1].counts.diskinfo[ndevs][0] = nmrd + nmwr + rd_mrg + wr_mrg;   /* num reads+writes, proxy for tps */
 		_systat[1].counts.diskinfo[ndevs][1] = nmrd + nmwr;                     /* xfers (after r/w merges) */
 		_systat[1].counts.diskinfo[ndevs][2] = rd_sec/2 + wr_sec/2;             /* blks */
-		// _systat[1].counts.diskinfo[ndevs][3] = (ullong)((ms_rd + ms_wr) / (_INTERVAL * 1000.0) * 100);  /* msps, but track busy% */
+		// _systat[1].counts.diskinfo[ndevs][3] = (ullong)((ms_rd + ms_wr) / (interval * 1000) * 100);  /* msps, but track busy% */
                 _systat[1].counts.diskinfo[ndevs][3] = (ullong)(io_ms);
                 _systat[1].counts.diskinfo[ndevs][4] = rd_sec/2;
                 _systat[1].counts.diskinfo[ndevs][5] = wr_sec/2;
@@ -1248,10 +1250,11 @@ void delta_stats( )
     /* convert cpu time used (in jiffies) into percent (measured in ticks @HZ) */
     /* The times are for all cpu cores total, we do not read the per-core stats */
     t = 0;
+    double interval = fptime() - _LAST_SAMPLE;
     for (i=0; i<7; i++) {
         /* v = (jiffies counted / jiffies per sampling interval) * 100% */
         double njiffies = (_systat[1].counts.cputime[i] - _systat[0].counts.cputime[i]);
-        double maxjiffies = HZ * _INTERVAL;  /* jiffies/second * seconds/interval */
+        double maxjiffies = HZ * interval;  /* jiffies/second * seconds/interval */
         double v = njiffies / maxjiffies * 100.0;
 	_systat[0].deltas.cpuuse[i] = v;
 	t += v;
@@ -1478,8 +1481,9 @@ int show_stats( )
     n = (PAGER_COL - 6) / 6 ;
     if (DISKS_ROW >= 18) n += 2;
     if (n > 16) n = 16;
+    double interval = fptime() - _LAST_SAMPLE;
     for (coli=0, i=0; i<n; i++) {
-        double busy = _systat[0].deltas.diskinfo[i][3] / (_INTERVAL * 1000) * 100;
+        double busy = _systat[0].deltas.diskinfo[i][3] / (interval * 1000) * 100;
         if (!strlen(_disknames[i])) continue;
         /* only show devices with activity, to skip controllers without attached devices */
         if (_systat[0].counts.diskinfo[i][1]) {
@@ -1603,6 +1607,7 @@ int main( int ac, char *av[] )
     _linuxver = gather_version();
     _pageKB = getpagesize() / 1024;
     _btime = getbtime();
+    _LAST_SAMPLE = _btime;
     _exec_start_delta = get_exec_drift(_btime);
 
     _win = initscr();
@@ -1616,11 +1621,12 @@ int main( int ac, char *av[] )
     mark = fptime();
     long loop_count = 0;
     for ( ; !done && !_had_hup && !_had_sigterm; loop_count++) {
-	static int first = 1;
-
+	int wake = 0;
 	gather_stats(loop_count);
+	int now = fptime();
 	delta_stats();
 	show_stats();
+	_LAST_SAMPLE = now;
 	refresh();
 
 	if (pause == 0.0) break;
@@ -1629,13 +1635,17 @@ int main( int ac, char *av[] )
         if (mark < fptime()) mark = fptime();
 
         do {
-            fpsleep(.02);
+            fpsleep(.01);
 
 	    switch(getch()) {
 	    case 'q':
 		done = 1;
 		break;
             // note: if ^Z has no effect, `reset` the terminal
+            case ' ':
+                mark = fptime();
+                wake = 1;
+                break;
 	    }
 
             // if window size changed, redraw the whole page
@@ -1645,7 +1655,7 @@ int main( int ac, char *av[] )
                 resize_screen();
             }
 
-        } while (fptime() < mark && !done);
+        } while (fptime() < mark && !wake && !done);
     }
 
     /* on receipt of SIGHUP restart (reload new binary) */
