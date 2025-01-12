@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.10.15"
+#define VERSION "v0.11.0"
 
 /**
 
@@ -38,7 +38,9 @@ AR: 0.9.0 todo changes:
 + combine xhci_hcd interrupts (2 identically named)
 2025-01-11
 - fix occasional crash (w very large values?)
-- maybe support ' ' to refresh immediately (and correctly scale the period denominator)
+- maybe support ' ' spacebar to refresh immediately (and correctly scale the time period denominator)
+- very first set of stats are divided by the sampling interval, should show them as absolute
+- if window is small, network devices overwrite top disks rows
 
 **/
 
@@ -241,6 +243,7 @@ static ulong _linuxver;		/* set by gather_version(), called from main */
 int _pageKB = 4;                /* set by main */
 time_t _btime = 0;              /* set by main */
 double _exec_start_delta = 0.0; /* computed by main */
+ullong _pow10[11] = { 1, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10 };   /* int bound of value of N digits */
 
 static WINDOW *_win;		/* initialized by main */
 
@@ -486,13 +489,20 @@ char * showmem( int fieldwidth, ullong val )
     return _showit(fieldwidth, 2, val, "KMGTPE", bases);
 }
 
-/* typeset a value to fit the field width, scale by powers of 1000 */
-char * shownum( int fieldwidth, ullong val )
+/* typeset a float to fit the field width, scale by powers of 1000 */
+char * showfnum( int fieldwidth, int decimals, ullong val )
 {
+    int overflows = fieldwidth-1 < lengthof(_pow10) && val >= _pow10[fieldwidth-1];
     const ullong k = 1024, m = k*k, g = m*k, t = g*k, p = t*k, e = p*k;
     ullong bases[] = { 1, k, m, g, t, p, e };
     // FIXME: z, y not representable in 64 bits
-    return _showit(fieldwidth, 0, val, "kmgtpe", bases);
+    return _showit(fieldwidth, overflows ? 0 : decimals, val, "kmgtpe", bases);
+}
+
+/* typeset an int to fit the field width, scale by powers of 10 */
+char * shownum( int fieldwidth, ullong val )
+{
+    return showfnum(fieldwidth, 0, val);
 }
 
 char * showscaledcount( int fieldwidth, ullong val )
@@ -503,11 +513,18 @@ char * showscaledcount( int fieldwidth, ullong val )
     return p;
 }
 
-char * showfloat( int fieldwidth, double val )
+/* format a floating-point number with the given width and decimals, while handling overflows */
+char * showfloat( int fieldwidth, int decimals, double val )
 {
-    static char tmpbuf[100];
-    if (!val) return " ";
-    sprintf(tmpbuf, "%*.1f", fieldwidth, val);
+    static char bufs[8][100] = { 0 };
+    static int bufid = 0;
+
+    char *tmpbuf = bufs[bufid++];
+    if (bufid >= lengthof(bufs)) bufid = 0;
+
+    sprintf(tmpbuf, "%*.*f", fieldwidth, decimals, val);
+    if (strlen(tmpbuf) > fieldwidth) return showfnum(fieldwidth, 0, val);
+
     return tmpbuf;
 }
 
@@ -536,7 +553,7 @@ char * startofline( char *buf, char *p ) {
 
 void finddiskname( char *name, int namelen, int major, int minor )
 {
-    char buf[1000], *p, *w, *q;
+    char buf[10000], *p, *w, *q;
     readfile("/proc/devices", buf, sizeof(buf));
     p = strstr(buf, "Block devices:");
     if (p) {
@@ -544,6 +561,7 @@ void finddiskname( char *name, int namelen, int major, int minor )
 	    int n = strtol(w, &w, 10);
 	    if (n == major) {
 		strncpy(name, w+1, namelen);
+		name[namelen - 1] = '\0';
 		q = strchr(name, '\n');
 		if (q) *q = '\0';
 		//sprintf(strchr(name, '\0'), ".%d", minor);
@@ -701,11 +719,13 @@ int gather_stats(long loop_count)
         if (p && sscanf(p, "%s:", num)) {
             // the colon-terminated tag at the front is the interrupt number (eg 8: or NMI:)
             strncpy(_intrnums[i], num, sizeof(_intrnums[i]-1));
+            _intrnums[i][sizeof(_intrnums[i]-1)] = '\0';
 
             // the double-space delimited string at the end is the interrupt name
             q = strchr(p, '\0');
             while (q[-1] != ' ' || q[-2] != ' ') --q;
             strncpy(_intrnames[i], q, sizeof(_intrnames[i])-1);
+            _intrnames[i][sizeof(_intrnames[i])-1] = '\0';
             *q = '\0';
 
             // total up the numeric columns (per-core interrupt counts) in the middle
@@ -955,9 +975,7 @@ int gather_stats(long loop_count)
 	    " sr4 ", " sr5 ", " sr6 ", " sr7 ",
 	    NULL };
         static int devnamelengths[lengthof(devnames)] = { 0 };
-        if (devnamelengths[0] == 0) {
-            for (i=0; devnames[i]; i++) devnamelengths[i] = strlen(devnames[i]);
-        }
+        for (i=0; devnames[i]; i++) devnamelengths[i] = strlen(devnames[i]);
 	/* major, minor, name, ... */
 	/*
 	    3    0 hda 228 87 21562 1224 4 0 48 56 0 996 1280
@@ -1030,7 +1048,7 @@ int gather_stats(long loop_count)
 	}
     }
     else {
-	strcpy(_disknames[0], "hdd");
+	strncpy(_disknames[0], "hdd", sizeof(_disknames[0])-1);
 	p = strstr(buf, "disk_rio");
 	if (p) _systat[1].counts.diskinfo[0][1] = strtol(p+8, NULL, 10);
 	p = strstr(buf, "disk_wio");
@@ -1292,7 +1310,7 @@ void delta_stats( )
 int show_stats( )
 {
     char buf[200], tmpbuf[200];
-    int i, j, r, n, wid, rowi, coli;
+    int i, j, r, n, rowi, coli;
     double scale, fr;
     char *p, *fmt;
 
@@ -1365,21 +1383,18 @@ int show_stats( )
     mvprintw(r++, PAGER_COL-1, "%s free", shownum(8, _systat[0].counts.memstats[6]));
     mvprintw(r++, PAGER_COL-1, "%s buf", shownum(8, _systat[0].counts.memstats[13]));
 
-    wid = (_systat[0].deltas.cpuuse[0] + _systat[0].deltas.cpuuse[2]) < 990;
-    fmt = wid ? "%5.1f%%s %5.1f%%q %5.1f%%u %5.1f%%n %5.1f%%i %5.1f%%w            "
-              : "%5.0f%%s %5.1f%%q %5.0f%%u %5.1f%%n %5.1f%%i %5.1f%%w            ";
-    /* note: on first print, the counts will overflow and the line will be longer */
-    /* the above line is extra long to clear the overprint caused by the very very large initial jiffies count */
+    fmt = "%6s%%s%6s%%q%6s%%u%6s%%n%6s%%i%6s%%w";
     mvprintw(10, 0, fmt,
-	   _systat[0].deltas.cpuuse[0],		/* system */
-	   _systat[0].deltas.cpuuse[1],         /* interrupt */
-	   _systat[0].deltas.cpuuse[2],		/* user not including nice */
-	   _systat[0].deltas.cpuuse[3],         /* nice */
-	   _systat[0].deltas.cputime[4],        /* idle -- as percent of total system time */
-           _systat[0].deltas.cpuuse[5]);	/* iowait */
+	    showfloat(6, 1, _systat[0].deltas.cpuuse[0]),	/* system */
+	    showfloat(6, 1, _systat[0].deltas.cpuuse[1]),	/* interrupt */
+	    showfloat(6, 1, _systat[0].deltas.cpuuse[2]),	/* user not including nice */
+	    showfloat(6, 1, _systat[0].deltas.cpuuse[3]),	/* nice */
+	    showfloat(6, 1, _systat[0].deltas.cputime[4]),	/* idle -- as percent of total system time */
+	    showfloat(6, 1, _systat[0].deltas.cpuuse[5]));	/* iowait */
                                                 /* TODO: guest, guest-nice */
+
     if (PAGER_COL >= 56) {
-        mvprintw(10, 6*8+2, "%5.1f%%t", _systat[0].deltas.cputime[6]);   /* steal */
+        mvprintw(10, 6*8, "%6s%%t", showfloat(6, 1, _systat[0].deltas.cputime[6]));	/* steal */
         /* TODO: guest, guest-nice */
     }
 
@@ -1424,6 +1439,7 @@ int show_stats( )
         {
 	    strncpy(buf, _intrnames[i], sizeof(buf) - 1);
 	    if (COLUMNS - INTR_COL - 11 < sizeof(buf)) buf[COLUMNS - INTR_COL - 11] = '\0';
+            else buf[sizeof(buf) - 1] = '\0';
             mvprintw(r++, INTR_COL, " %4s %s %.32s",
                 shownum(4, _systat[0].deltas.intr[i]), _intrnums[i], buf);
 	}
@@ -1463,17 +1479,16 @@ int show_stats( )
     if (DISKS_ROW >= 18) n += 2;
     if (n > 16) n = 16;
     for (coli=0, i=0; i<n; i++) {
+        double busy = _systat[0].deltas.diskinfo[i][3] / (_INTERVAL * 1000) * 100;
         if (!strlen(_disknames[i])) continue;
         /* only show devices with activity, to skip controllers without attached devices */
         if (_systat[0].counts.diskinfo[i][1]) {
             mvprintw(r+0, 6+6*coli, "%6s", _disknames[i]);
             mvprintw(r+1, 6+6*coli, "%6.6s", shownum(5, _systat[0].deltas.diskinfo[i][0]));     // tps
             mvprintw(r+2, 6+6*coli, "%6.6s", shownum(5, _systat[0].deltas.diskinfo[i][1]));     // xfers
-            // mvprintw(r+3, 6+6*coli, "%6.6s", showmem(5, _systat[0].deltas.diskinfo[i][2]));     // blocks
-            // mvprintw(r+4, 6+6*coli, "%6.6s", showfloat(6, _systat[0].deltas.diskinfo[i][3] / (_INTERVAL * 1000) * 100));        // %busy
             mvprintw(r+3, 6+6*coli, "%6.6s", showmem(5, _systat[0].deltas.diskinfo[i][4]));     // rblk
             mvprintw(r+4, 6+6*coli, "%6.6s", showmem(5, _systat[0].deltas.diskinfo[i][5]));     // wblk
-            mvprintw(r+5, 6+6*coli, "%6.6s", showfloat(6, _systat[0].deltas.diskinfo[i][3] / (_INTERVAL * 1000) * 100));        // %busy
+            mvprintw(r+5, 6+6*coli, "%6.6s", busy ? showfloat(5, 1, busy) : " ");               // %busy
             ++coli;
         }
     }
