@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.11.0"
+#define VERSION "v0.11.1"
 
 /**
 
@@ -436,7 +436,7 @@ char * _showit( int fieldwidth, int frac, ullong val, char *units, ullong bases[
 
     /* rotate through 16 buffers to allow multiple _showit() in a single printw */
     char *p;
-    ullong b;
+    ullong *b;
     char *buf = bufs[bufid++];
     if (bufid >= lengthof(bufs)) bufid = 0;
 
@@ -451,20 +451,20 @@ char * _showit( int fieldwidth, int frac, ullong val, char *units, ullong bases[
 
     /* try to fit field overflow by changing the units */
     /* if decimals are allowed do not typeset more than 4 digits */
-    for (p = units, b = *bases; *p && (strlen(buf) > fieldwidth || (frac > 0 && (val/b >= 10000))); p++, b = *++bases) {
+    for (p = units, b = bases; *p && (strlen(buf) > fieldwidth || (frac > 0 && (val / *b >= 10000))); p++, b++) {
         // TODO: test fit numerically not with strlen
         if (frac) {
-            snprintf(buf, sizeof(*bufs), "%*.*f%c", fieldwidth-1, frac, (double)(val)/b, *p);
+            snprintf(buf, sizeof(*bufs), "%*.*f%c", fieldwidth-1, frac, (double)(val) / *b, *p);
             if (strlen(buf) > fieldwidth && fieldwidth - frac <= 4) {
                 /* if the decimals don't fit, try to omit the decimals */
                 /* beware the degenerate case of never fits thus typesets 0E */
                 int toomany = strlen(buf) - fieldwidth;
-                if (toomany <= frac && (val/b < 10000 || !*(p+1))) {
-                    snprintf(buf, sizeof(*bufs), "%*.*f%c", fieldwidth-1, frac - toomany, (double)(val) / b, *p);
+                if (toomany <= frac && (val / *b < 10000 || !*(p+1))) {
+                    snprintf(buf, sizeof(*bufs), "%*.*f%c", fieldwidth-1, frac - toomany, (double)(val) / *b, *p);
                 }
             }
         } else {
-            snprintf(buf, sizeof(*bufs), "%*llu%c", fieldwidth-1, (val + b/2) / b, *p);
+            snprintf(buf, sizeof(*bufs), "%*llu%c", fieldwidth-1, (val + *b/2) / *b, *p);
         }
     }
 
@@ -493,8 +493,8 @@ char * showmem( int fieldwidth, ullong val )
 char * showfnum( int fieldwidth, int decimals, ullong val )
 {
     int overflows = fieldwidth-1 < lengthof(_pow10) && val >= _pow10[fieldwidth-1];
-    const ullong k = 1024, m = k*k, g = m*k, t = g*k, p = t*k, e = p*k;
-    ullong bases[] = { 1, k, m, g, t, p, e };
+    const ullong k = 1000, m = k*k, g = m*k, t = g*k, p = t*k, e = p*k;
+    ullong bases[] = { k, m, g, t, p, e };
     // FIXME: z, y not representable in 64 bits
     return _showit(fieldwidth, overflows ? 0 : decimals, val, "kmgtpe", bases);
 }
