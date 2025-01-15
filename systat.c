@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.13.0"
+#define VERSION "v0.13.1"
 
 /**
 
@@ -304,7 +304,7 @@ struct system_stats_s {
     struct {
 	/* top line */
 	int		nusers;
-	int		nprocs, ntotalprocs, nlastpid;
+	int		nrunprocs, ntotalprocs, nlastpid;
 	float		loadavg[3];
 	float		temps[3];
 	time_t		date;
@@ -664,12 +664,13 @@ int gather_stats(long loop_count)
 	       "sensors | grep CPU | grep Temp:"); */
     /* temps[0] = CPU Temp: +25.0 [CF] */
 
+    // 1m 5m 15m load average, running/total threads, last pid
     readfile("/proc/loadavg", buf, sizeof(buf));
     sscanf(buf, "%f %f %f %d/%d %d",
 	   &_systat[1].counts.loadavg[0],
 	   &_systat[1].counts.loadavg[1],
 	   &_systat[1].counts.loadavg[2],
-	   &_systat[1].counts.nprocs,
+	   &_systat[1].counts.nrunprocs,
 	   &_systat[1].counts.ntotalprocs,
            &_systat[1].counts.nlastpid);
 
@@ -1128,7 +1129,7 @@ int gather_stats(long loop_count)
                     now = fptime();
                     n = scan_ullong(p+10, ":");
                     // FreeBSD defines "active" as having run in the last 20 seconds.
-                    last_active = btime + _exec_start_delta + n/1000;
+                    last_active = btime + _exec_start_delta + n/1000.0;
                     is_active = last_active >= now - 20;
                 }
                 /* else if (e == 0) then file is empty, process might have exited? */
@@ -1367,6 +1368,8 @@ int show_stats( )
 
     /* process stats */
     // was: mvprintw(7, 0, "Proc:r  p  d  s  w   Csw  Trp   Sys  Int  Sof  Flt");
+    //   = running, page wait, disk wait, sleeping, swapped out but wants to run [page wait not tracked by linux]
+    //   = Context switches, Traps, System calls, Interrupts, net software Interrupts, page Faults
     mvprintw(7, 0, "Proc:r   p   d   s   w  Csw  Trp  Int  Sof  Flt");
     mvprintw(8, 2, "%s", shownum(4, _systat[0].counts.procs[0] - 1));   // do not count ourselves as a running process
     mvprintw(8, 6, "%s", shownum(4, _systat[0].counts.procs[1]));
