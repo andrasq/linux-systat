@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.12.0"
+#define VERSION "v0.13.0"
 
 /**
 
@@ -37,10 +37,20 @@ AR: 0.9.0 todo changes:
 + combine eth%d-rx-%d and eth%d-tx-%d interrupts (2 each)
 + combine xhci_hcd interrupts (2 identically named)
 2025-01-11
-- fix occasional crash (w very large values?)
+- fix occasional crash
+  (gdb) where
+  #0  0x00007ffff7e114a7 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+  #1  0x0000000000401aea in scan_ullong ()
+  #2  0x00000000004035e0 in gather_stats ()
+  #3  0x00000000004017e9 in main ()
 + maybe support ' ' spacebar to refresh immediately (and correctly scale the time period denominator)
 + very first set of stats are divided by the sampling interval, should show them as absolute
 - if window is small, network devices overwrite top disks rows
+- cpu usage missing? eg 80% busy, but only 550% of 1200% accounted for: (%q always zero??)
+              Cpus 2p/12c/12t  2.629 GHz
+   130.4%s   0.0%q 404.6%u  17.7%n  19.7%i   5.9%w   0.0%t        862 react      16: ehci_hcd:usb1
+  |     |     |     |     |     |     |     |     |     |     |       pdwak      23: ehci_hcd:usb2
+  ===========>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>--                471 pdpgs  304 39: ahci[0000:00:1f.2]
 
 **/
 
@@ -880,6 +890,7 @@ int gather_stats(long loop_count)
 
     readfile("/proc/stat", buf, sizeof(buf));
     p = strstr(buf, "cpu ");
+// FIXME: p == NULL
     if (_linuxver >= 2006011) {
         // have available iowait, steal
         // skip irq, softirq (derived below)
@@ -1103,7 +1114,7 @@ int gather_stats(long loop_count)
 	    if (strchr("0123456789", de->d_name[0])) {
 		char fname[200];
 		ullong n, nn[10];
-		unsigned long pgsz = getpagesize() / 1024;
+		unsigned long pgsz = _pageKB;
                 double last_active;
                 int is_active = 0;
 
@@ -1112,7 +1123,7 @@ int gather_stats(long loop_count)
                  * Use that info to distinguish "active" (ran in last 20 sec) from inactive */
                 sprintf(fname, "/proc/%s/sched", de->d_name);
                 e = readfile(fname, buf, sizeof(buf));
-                if (e >= 0) {
+                if (e > 0) {
                     p = strstr(buf, "se.exec_start");
                     now = fptime();
                     n = scan_ullong(p+10, ":");
@@ -1120,6 +1131,7 @@ int gather_stats(long loop_count)
                     last_active = btime + _exec_start_delta + n/1000;
                     is_active = last_active >= now - 20;
                 }
+                /* else if (e == 0) then file is empty, process might have exited? */
 
 		n = 0;
 		memset(nn, 0, sizeof(nn));
@@ -1177,7 +1189,7 @@ int gather_stats(long loop_count)
 
 		sprintf(fname, "/proc/%s/statm", de->d_name);
 		e = readfile(fname, buf, sizeof(buf));
-                if (e >= 0) {
+                if (e > 0) {
                     // size, resident, shared(file), text, lib, data+stack, dirty
                     sscanf(buf, "%llu %llu %llu %llu %llu %llu %llu",
                            nn+0, nn+1, nn+2, nn+3, nn+4, nn+5, nn+6);
@@ -1196,6 +1208,7 @@ int gather_stats(long loop_count)
                         _systat[1].counts.procs[4] += 1;	/* +W swapped out */
                     }
                 }
+                /* else process may have disappered? */
 #if 0
 		/* sum up memory use by all processes: */
 		sprintf(fname, "/proc/%s/status", de->d_name);
@@ -1621,7 +1634,7 @@ int main( int ac, char *av[] )
     mark = fptime();
     long loop_count = 0;
     for ( ; !done && !_had_hup && !_had_sigterm; loop_count++) {
-	int wake = 0;
+	int paused = 0;
 	gather_stats(loop_count);
 	int now = fptime();
 	delta_stats();
@@ -1644,7 +1657,7 @@ int main( int ac, char *av[] )
             // note: if ^Z has no effect, `reset` the terminal
             case ' ':
                 mark = fptime();
-                wake = 1;
+                paused = !paused;
                 break;
 	    }
 
@@ -1655,7 +1668,7 @@ int main( int ac, char *av[] )
                 resize_screen();
             }
 
-        } while (fptime() < mark && !wake && !done);
+        } while (paused || (fptime() < mark && !done));
     }
 
     /* on receipt of SIGHUP restart (reload new binary) */
