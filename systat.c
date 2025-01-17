@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.13.1"
+#define VERSION "v0.14.0"
 
 /**
 
@@ -254,6 +254,7 @@ int _pageKB = 4;                /* set by main */
 time_t _btime = 0;              /* set by main */
 double _exec_start_delta = 0.0; /* computed by main */
 ullong _pow10[11] = { 1, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10 };   /* int bound of value of N digits */
+char _hostname[200];
 
 static WINDOW *_win;		/* initialized by main */
 
@@ -1347,7 +1348,7 @@ int show_stats( )
         _systat[0].counts.sysinfo.nthreads,
         _systat[0].counts.sysinfo.mhz / 1000);
 
-    mvprintw(0, PAGER_COL+5, "%.19s.%03d", ctime(&_systat[0].counts.date), _systat[0].counts.ms);
+    mvprintw(0, PAGER_COL+5, "%.19s.%03d  [%s]", ctime(&_systat[0].counts.date), _systat[0].counts.ms, _hostname);
 
     move(3,0);
     printw("Mem %7s   Share   VM Tot    Share    Free", showmem(7, _systat[0].counts.sysinfo.memtotalkb));
@@ -1372,7 +1373,9 @@ int show_stats( )
     //   = Context switches, Traps, System calls, Interrupts, net software Interrupts, page Faults
     mvprintw(7, 0, "Proc:r   p   d   s   w  Csw  Trp  Int  Sof  Flt");
     mvprintw(8, 2, "%s", shownum(4, _systat[0].counts.procs[0] - 1));   // do not count ourselves as a running process
-    mvprintw(8, 6, "%s", shownum(4, _systat[0].counts.procs[1]));
+    // mvprintw(8, 6, "%s", shownum(4, _systat[0].counts.procs[1]));
+    // time spent in i/o wait (ie "page wait") normalized to number of threads (ie vcpus)
+    mvprintw(8, 6, "%s", shownum(4, _systat[0].deltas.cputime[5] / 100.0 * _systat[0].counts.sysinfo.nthreads + 0.5));
     mvprintw(8, 10, "%s", shownum(4, _systat[0].counts.procs[2]));
     mvprintw(8, 14, "%s", shownum(4, _systat[0].counts.procs[3]));
     mvprintw(8, 18, "%s", shownum(4, _systat[0].counts.procs[4]));
@@ -1432,6 +1435,7 @@ int show_stats( )
 
     /* draw the graph to cover both endpoints 0% and 100%, ie 51 chars */
     move(12,0);
+    /* TODO: precompute the bar graph, and output it with a single call */
     fr = i = 0;
     fr += scale * _systat[0].deltas.cputime[0];
     for (; (i+.5)<fr; i++) addch('=');		/* kernel (system) */
@@ -1625,6 +1629,7 @@ int main( int ac, char *av[] )
     _btime = getbtime();
     _LAST_SAMPLE = _btime;
     _exec_start_delta = get_exec_drift(_btime);
+    readfile("/etc/hostname", _hostname, sizeof(_hostname));
 
     _win = initscr();
     if (!_win) die(2);
