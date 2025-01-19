@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.14.0"
+#define VERSION "v0.14.1"
 
 /**
 
@@ -649,7 +649,7 @@ int gather_stats(long loop_count)
 {
     time_t btime = _btime;
     // 8c/16t /proc/cpuinfo is 24k, size buf
-    char *p, *q, buf[100000], fname[80], *nextp, *nextw;
+    char *p, *q, buf[200000], fname[80], *nextp, *nextw;
     ullong i, j, n;
     int have_fault_counts = 0;
     double now = fptime();
@@ -720,6 +720,7 @@ int gather_stats(long loop_count)
         _systat[1].counts.sysinfo.mhz = maxmhz;
     }
 
+    /* NOTE: /proc/interrupts can grow huge; 40k for 24 cores, but can have 100+ cores */
     readfile("/proc/interrupts", buf, sizeof(buf));
     _systat[1].counts.totintr = 0;
     nextp = buf;
