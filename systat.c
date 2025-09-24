@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.14.1"
+#define VERSION "v0.14.2"
 
 /**
 
@@ -763,6 +763,9 @@ int gather_stats(long loop_count)
                     strcmp(_intrnames[i], "ioat-msix") == 0 && (nchars = 9) ||
                     sscanf(_intrnames[i], "nvme%ldq%ld", &n, &m) == 2 && (nchars = 5) ||
                     sscanf(_intrnames[i], "megasas%ld-msix%ld", &n, &m) == 2 && (nchars = 7) ||
+                    sscanf(_intrnames[i], "mpt%ldsas%ld-msix", &n, &m) == 2 && (nchars = 8) || 
+                    strncmp(_intrnames[i], "megasas", 8) == 0 ||
+                    strncmp(_intrnames[i], "PCIe PME, pciehp", 16) == 0 ||
                     sscanf(_intrnames[i], "eno%ld-TxRx-%ld", &n, &m) == 2 && (nchars = 4) ||
                     sscanf(_intrnames[i], "ens%ld-Tx-Rx-%ld", &n, &m) == 2 && (nchars = 4) ||
                     sscanf(_intrnames[i], "virtio%ld", &n) == 1 && (nchars = 7) ||
