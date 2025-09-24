@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.14.2"
+#define VERSION "v0.14.3"
 
 /**
 
@@ -271,8 +271,9 @@ double _LAST_SAMPLE = 0;
 int PAGER_COL = 50;
 int INTR_COL = 50 + 13;
 int DISKS_ROW = 18;
-int LINES = 24;
-int COLUMNS = 80;
+// libtinfo defines a global LINES, avoid the name conflict
+int W_LINES = 24;
+int W_COLUMNS = 80;
 
 struct winsize _win_sz;
 void on_winch( )
@@ -280,13 +281,13 @@ void on_winch( )
     char strbuf[40];
 
     ioctl(1, TIOCGWINSZ, &_win_sz);  // ws_row, ws_col, ws_xpixel, ws_ypixel
-    LINES = _win_sz.ws_row;
-    COLUMNS = _win_sz.ws_col;
+    W_LINES = _win_sz.ws_row;
+    W_COLUMNS = _win_sz.ws_col;
 
-    PAGER_COL = COLUMNS - 30;
+    PAGER_COL = W_COLUMNS - 30;
     if (PAGER_COL > 60) PAGER_COL = 60;
     INTR_COL = PAGER_COL + 13;
-    DISKS_ROW = (LINES >= 28) ? 22 : (LINES >= 26) ? 20 : 18;
+    DISKS_ROW = (W_LINES >= 28) ? 22 : (W_LINES >= 26) ? 20 : 18;
 }
 
 static int _had_hup = 0;
@@ -1345,6 +1346,8 @@ int show_stats( )
     mvprintw(1, 12, "Mark");
 
     // TEST:
+    // calling the processors p, cores c, threads t (like dmidecode calls them)
+    // lscpu enumerates them as sockets, numa nodes, cores (per socket), cpus (threads per core)
     r = DISKS_ROW - 1;
     mvprintw(1, 12, "Cpus %lup/%luc/%lut  %5.3f GHz",
         _systat[0].counts.sysinfo.ncpus,
@@ -1462,10 +1465,10 @@ int show_stats( )
     // r = interrupts row
     for (r=8, i=0; i<lengthof(_systat[1].counts.intr); i++) {
 	/* map interrupt to device in /proc/interrupts (2.4 series) */
-	if (_systat[1].counts.intr[i] && r<LINES)
+	if (_systat[1].counts.intr[i] && r<W_LINES)
         {
 	    strncpy(buf, _intrnames[i], sizeof(buf) - 1);
-	    if (COLUMNS - INTR_COL - 11 < sizeof(buf)) buf[COLUMNS - INTR_COL - 11] = '\0';
+	    if (W_COLUMNS - INTR_COL - 11 < sizeof(buf)) buf[W_COLUMNS - INTR_COL - 11] = '\0';
             else buf[sizeof(buf) - 1] = '\0';
             mvprintw(r++, INTR_COL, " %4s %s %.32s",
                 shownum(4, _systat[0].deltas.intr[i]), _intrnums[i], buf);
@@ -1542,7 +1545,7 @@ int show_stats( )
         }
     }
 
-    move(LINES-1, COLUMNS-1);
+    move(W_LINES-1, W_COLUMNS-1);
 
     return 0;
 }
@@ -1596,8 +1599,8 @@ int main( int ac, char *av[] )
 
     // get terminal size
     on_winch();
-    old_rows = LINES;
-    int old_columns = COLUMNS;
+    old_rows = W_LINES;
+    int old_columns = W_COLUMNS;
 
     signal(SIGWINCH, on_winch);
     signal(SIGHUP, on_sighup);
@@ -1674,9 +1677,9 @@ int main( int ac, char *av[] )
 	    }
 
             // if window size changed, redraw the whole page
-            if (LINES != old_rows || COLUMNS != old_columns) {
-                old_rows = LINES;
-                old_columns = COLUMNS;
+            if (W_LINES != old_rows || W_COLUMNS != old_columns) {
+                old_rows = W_LINES;
+                old_columns = W_COLUMNS;
                 resize_screen();
             }
 
