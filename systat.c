@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.14.3"
+#define VERSION "v0.14.4"
 
 /**
 
@@ -322,7 +322,8 @@ struct system_stats_s {
             ulong ncores;
             ulong nthreads;
             ulong memtotalkb;
-            double mhz;
+            double maxmhz;
+            double avgmhz;
         } sysinfo;
 	/* cpu usage */
 	unsigned long cputime[7];	/* sys, intr, user, nice, idle, iowait, steal */
@@ -677,7 +678,7 @@ int gather_stats(long loop_count)
            &_systat[1].counts.nlastpid);
 
     if (readfile("/proc/cpuinfo", buf, sizeof(buf)) > 0) {
-        int ncpus = 0, ncores = 0, nthreads = 0, nmhz = 0, maxmhz = 0, vcores = 0;
+        int ncpus = 0, ncores = 0, nthreads = 0, nmhz = 0, totmhz = 0, maxmhz = 0, vcores = 0;
         // see /sys/devices/system/cpu/cpu*/topology/thread_siblings_list for pairings 0,8 1,9 etc
         // to disable at runtime: echo 0 > /sys/devices/system/cpu/cpu9/online
         // to disable at boottime: append `noht` kernel flag
@@ -707,6 +708,7 @@ int gather_stats(long loop_count)
 
             // the kernel shows the current speed of each cpu, use that to calc the average
             line = strstr(q, "cpu MHz");
+            totmhz += mhz;
             if (line && sscanf(line, "cpu MHz : %lf", &mhz) == 1 && mhz > maxmhz) maxmhz = mhz;
         }
         ncpus = popcount(cpumask, sizeof(cpumask));
@@ -718,7 +720,8 @@ int gather_stats(long loop_count)
         // NOTE: we assume all cpus have the same number of cores
         _systat[1].counts.sysinfo.ncores = ncpus * ncores;
         _systat[1].counts.sysinfo.nthreads = nthreads;
-        _systat[1].counts.sysinfo.mhz = maxmhz;
+        _systat[1].counts.sysinfo.maxmhz = maxmhz;
+        _systat[1].counts.sysinfo.avgmhz = (double)totmhz / nthreads;
     }
 
     /* NOTE: /proc/interrupts can grow huge; 40k for 24 cores, but can have 100+ cores */
@@ -1348,12 +1351,14 @@ int show_stats( )
     // TEST:
     // calling the processors p, cores c, threads t (like dmidecode calls them)
     // lscpu enumerates them as sockets, numa nodes, cores (per socket), cpus (threads per core)
+    // note that maxcpu is distorted by sytat itself, it spikes the clock when running
     r = DISKS_ROW - 1;
-    mvprintw(1, 12, "Cpus %lup/%luc/%lut  %5.3f GHz",
+    mvprintw(1, 12, "Cpus %lup/%luc/%lut  %5.3f GHz (max %5.3f)",
         _systat[0].counts.sysinfo.ncpus,
         _systat[0].counts.sysinfo.ncores,
         _systat[0].counts.sysinfo.nthreads,
-        _systat[0].counts.sysinfo.mhz / 1000);
+        _systat[0].counts.sysinfo.avgmhz / 1000,
+        _systat[0].counts.sysinfo.maxmhz / 1000);
 
     mvprintw(0, PAGER_COL+5, "%.19s.%03d  [%s]", ctime(&_systat[0].counts.date), _systat[0].counts.ms, _hostname);
 
