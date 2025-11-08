@@ -49,6 +49,10 @@ Sample output:
 Change Log
 ----------
 
+- 0.14.5 - omit count when no network activity
+- 0.14.4 - show both max and avg mhz
+- 0.14.0 - also show hostname, show page wait in iotime
+- 0.13.0 - fix crash when /proc/*/sched disappears
 - 0.9.34 - fix num disks displayed
 - 0.9.33 - abbreviate nvme dev names, display %s and %u times as core-%, not system-%
 - 0.9.31 - first github version; fix disk stats when lots of network interfaces

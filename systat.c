@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.14.4"
+#define VERSION "v0.14.5"
 
 /**
 
@@ -519,10 +519,11 @@ char * shownum( int fieldwidth, ullong val )
     return showfnum(fieldwidth, 0, val);
 }
 
-char * showscaledcount( int fieldwidth, ullong val )
+char * shownetnum( int fieldwidth, ullong val )
 {
-    if (!val) return "0";
+    if (!val) return "";
     char *p = shownum(fieldwidth, val);
+    /* skip the left-side whitespace padding */
     while (*p == ' ') p++;
     return p;
 }
@@ -1542,10 +1543,10 @@ int show_stats( )
 	if (_systat[0].counts.net[i*4 + 0] || _systat[0].counts.net[i*4 + 2]) {
 	    printw("%8s:  Rx: %s/%s Tx: %s/%s             ",
 		   _netname[i],
-		   showscaledcount(5, _systat[0].deltas.net[i*4 + 0]),
-		   showscaledcount(5, _systat[0].deltas.net[i*4 + 1]),
-		   showscaledcount(5, _systat[0].deltas.net[i*4 + 2]),
-		   showscaledcount(5, _systat[0].deltas.net[i*4 + 3]));
+		   shownetnum(5, _systat[0].deltas.net[i*4 + 0]),
+		   shownetnum(5, _systat[0].deltas.net[i*4 + 1]),
+		   shownetnum(5, _systat[0].deltas.net[i*4 + 2]),
+		   shownetnum(5, _systat[0].deltas.net[i*4 + 3]));
             rowi++;
         }
     }
