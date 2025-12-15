@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.14.6"
+#define VERSION "v0.15.0"
 
 /**
 
@@ -385,6 +385,18 @@ static void fpsleep( double pause )
     tv.tv_usec = (pause - tv.tv_sec) * 1000000;
     usleep(tv.tv_usec);
     sleep(tv.tv_sec);
+}
+
+static char* format_timediff( double diff ) {
+    static char buf[40];
+    long secdiff = diff;
+    int sec = secdiff % 60;
+    int min = secdiff / 60 % 60;
+    int hrs = secdiff / 3600 % 24;
+    int days = secdiff / 86400;
+    // sprintf(buf, "%dd %02d:%02d:%02d", days, hrs, min, sec);
+    sprintf(buf, "%dd %02d:%02d", days, hrs, min);
+    return buf;
 }
 
 struct scaletab {
@@ -1361,7 +1373,8 @@ int show_stats( )
         _systat[0].counts.sysinfo.avgmhz / 1000,
         _systat[0].counts.sysinfo.maxmhz / 1000);
 
-    mvprintw(0, PAGER_COL+5, "%.19s.%03d  [%s]", ctime(&_systat[0].counts.date), _systat[0].counts.ms, _hostname);
+    mvprintw(0, PAGER_COL+5, "%.19s.%03d, up %s", ctime(&_systat[0].counts.date), _systat[0].counts.ms, format_timediff(fptime() - _btime));
+    mvprintw(1, PAGER_COL+5+2, "[%s]", _hostname);
 
     move(3,0);
     printw("Mem %7s   Share   VM Tot    Share    Free", showmem(7, _systat[0].counts.sysinfo.memtotalkb));
