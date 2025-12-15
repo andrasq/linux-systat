@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.14.5"
+#define VERSION "v0.14.6"
 
 /**
 
@@ -709,8 +709,8 @@ int gather_stats(long loop_count)
 
             // the kernel shows the current speed of each cpu, use that to calc the average
             line = strstr(q, "cpu MHz");
-            totmhz += mhz;
             if (line && sscanf(line, "cpu MHz : %lf", &mhz) == 1 && mhz > maxmhz) maxmhz = mhz;
+            totmhz += mhz;
         }
         ncpus = popcount(cpumask, sizeof(cpumask));
         ncores = popcount(coremask, sizeof(coremask));
