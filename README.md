@@ -2,7 +2,8 @@ systat
 ======
 
 BSD-like `systat(1)` utility for Linux similar to `vmstat -vm`.  Displays memory,
-process, interrupt, disk and network activity.
+process, interrupt, disk and network activity.  Does not have the vmstat, iostat
+etc. subpages of the BSD version.
 
 Usage: `systat [interval]`
 
@@ -11,6 +12,9 @@ To build, check out repo and
     cc -Os -o systat systat.c -lncurses -lm
     sudo install ./systat /usr/local/bin/
 
+Or just
+    make
+    sudo make install
 
 Sample output:
 
@@ -49,8 +53,9 @@ Sample output:
 Change Log
 ----------
 
+- 0.16.0 - fix %cpu glitch, right edge wrapping, running procs count
 - 0.14.5 - omit count when no network activity
-- 0.14.4 - show both max and avg mhz
+- 0.14.4 - show both max and avg GHz
 - 0.14.0 - also show hostname, show page wait in iotime
 - 0.13.0 - fix crash when /proc/*/sched disappears
 - 0.9.34 - fix num disks displayed
