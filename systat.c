@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.15.1"
+#define VERSION "v0.15.2"
 
 /**
 
@@ -1535,11 +1535,11 @@ int show_stats( )
     mvprintw(r+1, 0, "  tps");
     mvprintw(r+2, 0, "xfers");
     // mvprintw(r+3, 0, " blks");
-    // mvprintw(r+4, 0, "%busy");
+    // mvprintw(r+4, 0, "%%busy");
     // separate blks read/written
     mvprintw(r+3, 0, " rblk");
     mvprintw(r+4, 0, " wblk");
-    mvprintw(r+5, 0, "%busy");
+    mvprintw(r+5, 0, "%%busy");
     // for each block device, print 4 stats (show as many devices as can fit, 16 max)
     n = (PAGER_COL - 6) / 6 ;
     if (DISKS_ROW >= 18) n += 2;
