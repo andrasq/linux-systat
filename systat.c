@@ -1342,18 +1342,48 @@ int gather_stats(long loop_count)
 void delta_stats( )
 {
     double totjiffies = 0;
+    double ncpu = _systat[1].counts.sysinfo.nthreads;   /* number of linux cores for %cpu */
+    double interval = fptime() - _LAST_SAMPLE;          /* sampling interval seconds */
+    double intervaljiffies = _hz * interval;            /* jiffies/second * seconds/interval */
+    double sysjiffies = intervaljiffies * ncpu;         /* total jiffies available across all cores */
     int i, j;
-    // linux counts %cpu based on the number of virtual cores
-    double ncpu = _systat[1].counts.sysinfo.nthreads;
-    double interval = fptime() - _LAST_SAMPLE;
+
+#if 1
+    // aha! this works!! the problem was `mark += pause` which did not account for (a lot of) processing time
+
+// FIXME: rename cputime to eg cpujiffies
+    /* Calculate the cpu jiffies used over the sampling interval. */
+    for (i=0; i<lengthof(_systat[1].counts.cputime); i++) {
+        double njiffies = (_systat[1].counts.cputime[i] - _systat[0].counts.cputime[i]);
+        _systat[0].deltas.cputime[i] = njiffies;
+        totjiffies += njiffies;
+    }
+
+// FIXME: compute into corepct
+    double fractionOfAllCores = 1 / ncpu; // intervaljiffies / sysjiffies;
+    for (i=0; i<lengthof(_systat[1].counts.cputime); i++) {
+        double njiffies = _systat[0].deltas.cputime[i];
+
+        /* Convert core-jiffies used into core-percent, to use in the %s %u %i fields. */
+        /* The times we read are for all cpu cores total, we do not read the per-core stats, */
+        /* so cpuuse can exceed 100% on multi-core systems */
+	_systat[0].deltas.cpuuse[i] = njiffies / intervaljiffies * 100.0;
+        _systat[0].deltas.corepct[i] = njiffies / intervaljiffies * 100.0;
+
+        /* Also track the fraction of total available system cpu time used in this interval.
+         * This measurement can never exceed 100%.  This count is used for the bar chart. */
+        _systat[0].deltas.cputime[i] = _systat[0].deltas.cpuuse[i] * fractionOfAllCores;
+        _systat[0].deltas.totpct[i] = _systat[0].deltas.corepct[i] * fractionOfAllCores;
+    }
+
+#else
+    // FIXME: quite accidentally this displays the correct %u %s %n values! (but 0.0%i idle)
 
     /* Convert cpu time used (in jiffies) into core percent, to use in the %s %u %i. */
     /* The times we read are for all cpu cores total, we do not read the per-core stats, */
     /* so cpuuse can exceed 100% on multi-core systems */
     /* t counts total reported jiffies, but compute them instead */
     totjiffies = 0;
-    double intervaljiffies = _hz * interval;            /* jiffies/second * seconds/interval */
-    int systemjiffies = intervaljiffies * ncpu;         /* total core-jiffies available over the interval */
     for (i=0; i<lengthof(_systat[1].counts.cputime); i++) {
         /* v = (jiffies counted / jiffies per sampling interval) * 100% */
         double njiffies = (_systat[1].counts.cputime[i] - _systat[0].counts.cputime[i]);
@@ -1376,6 +1406,7 @@ void delta_stats( )
         // _systat[0].deltas.cputime[i] = _systat[0].deltas.cpuuse[i] * s;
         _systat[0].deltas.cputime[i] /= totjiffies * 100;
     }
+#endif
 
     // do not use lastpid, newer kernels do not assign pids monotonically
     // _systat[0].deltas.newprocs = _systat[1].counts.nlastpid - _systat[0].counts.nlastpid;
