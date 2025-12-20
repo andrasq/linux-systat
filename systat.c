@@ -311,6 +311,7 @@ struct system_stats_s {
 	/* top line */
 	int		nusers;
 	int		nrunprocs, ntotalprocs, nlastpid;
+	ullong		ncreatedprocs;
 	float		loadavg[3];
 	float		temps[3];
 	time_t		date;
@@ -1037,6 +1038,13 @@ int gather_stats(long loop_count)
     sscanf(p, " ctxt %lu",
 	   &_systat[1].counts.ctxt[0]);
 
+    p = strstr(buf, "\nprocesses ");
+    sscanf(p, " processes %llu", &_systat[1].counts.ncreatedprocs);
+
+    // /proc/stat has a more reliable running-processes count that /proc/*/stat
+    p = strstr(buf, "\nprocs_running ");
+    sscanf(p, " procs_running %lu", &_systat[1].counts.procs[0]);
+
     /* if /proc/diskstats exists (2.5.69 and up), use that --
      * better format, too */
     if (readfile("/proc/diskstats", buf, sizeof(buf)) > 0) {
@@ -1360,8 +1368,9 @@ void delta_stats( )
         // _systat[0].deltas.cputime[i] = _systat[0].deltas.cpuuse[i] / ncpu;
     }
 
-    _systat[0].deltas.newprocs = _systat[1].counts.nlastpid -
-	_systat[0].counts.nlastpid;
+    // do not use lastpid, newer kernels do not assign pids monotonically
+    // _systat[0].deltas.newprocs = _systat[1].counts.nlastpid - _systat[0].counts.nlastpid;
+    _systat[0].deltas.newprocs = _systat[1].counts.ncreatedprocs - _systat[0].counts.ncreatedprocs;
 
     _systat[0].deltas.totintr =
 	_systat[1].counts.totintr - _systat[0].counts.totintr;
@@ -1471,7 +1480,7 @@ int show_stats( )
     mvprintw(8, 43, "%s", shownum(4, _systat[0].deltas.faults[1]));
     // overwrite Trp with New
     mvprintw(7, 29, "New");
-    mvprintw(8, 27, "%s", shownum(5, _systat[0].deltas.newprocs));
+    mvprintw(8, 28, "%s", shownum(4, _systat[0].deltas.newprocs));
 
     r = 6;  // mem stats row
     mvprintw(r++, PAGER_COL, "%s cow", shownum(7, _systat[0].counts.memstats[0]));
