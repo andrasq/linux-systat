@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.15.2"
+#define VERSION "v0.15.3"
 
 /**
 
@@ -255,6 +255,7 @@ time_t _btime = 0;              /* set by main */
 double _exec_start_delta = 0.0; /* computed by main */
 ullong _pow10[11] = { 1, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10 };   /* int bound of value of N digits */
 char _hostname[200];
+int _hz;                        /* getconf CLK_TCK; man 7 time: typically 100 */
 
 static WINDOW *_win;		/* initialized by main */
 
@@ -351,8 +352,8 @@ struct system_stats_s {
 // TODO: read stats into _systat[1] by symbolic name eg VMSTAT_PGPGIN,
 //       compute values for display by symbolic name later.
     struct {
-	float cputime[7];
-	float cpuuse[7];
+	float cputime[10];      /* >= 2.6.33: usr,nice,sys,idle,iow,irq,softirq,steal,guest,guestnice */
+	float cpuuse[10];
 	ullong newprocs;
 	ullong pager[2];
 	ullong swapper[2];
@@ -559,7 +560,7 @@ char * shownetnum( int fieldwidth, ullong val )
 /* format a floating-point number with the given width and decimals, while handling overflows */
 char * showfloat( int fieldwidth, int decimals, double val )
 {
-    static char bufs[8][100] = { 0 };
+    static char bufs[20][40] = { 0 };
     static int bufid = 0;
 
     char *tmpbuf = bufs[bufid++];
@@ -645,6 +646,22 @@ double getbtime( )
     if (p) btime = strtoul(p+6, NULL, 10);
 
     return (time_t) btime;
+}
+
+// read the running kernel HZ, which is typically 100, 250, or 1000; see time(7).
+int gethz( ) {
+    char fname[40] = "/tmp/systat-tmp-XXXXXX";
+    int fd = mkstemp(fname);
+    char cmdbuf[80];
+    char outbuf[80];
+    int hz;
+    snprintf(cmdbuf, sizeof(cmdbuf), "getconf CLK_TCK > %s", fname);
+    int e = system(cmdbuf);
+    readfile(fname, outbuf, sizeof(outbuf));
+    remove(fname);
+    if (e != 0) return HZ;
+    sscanf(outbuf, "%d", &hz);
+    return hz;
 }
 
 // Return the ms offset between exec_start and the actual uptime.
@@ -930,7 +947,23 @@ int gather_stats(long loop_count)
     readfile("/proc/stat", buf, sizeof(buf));
     p = strstr(buf, "cpu ");
 // FIXME: p == NULL
-    if (_linuxver >= 2006011) {
+    if (_linuxver >= 2006033) {
+        // scan the summed cpu usage
+        sscanf(p, " cpu %lu %lu %lu %lu %lu %*u %*u %lu %lu %lu",
+               &_systat[1].counts.cputime[2],	// user
+               &_systat[1].counts.cputime[3],	// nice
+               &_systat[1].counts.cputime[0],	// system
+               &_systat[1].counts.cputime[4],	// idle
+               &_systat[1].counts.cputime[5],	// iowait
+                                                // skip irq
+                                                // skip softirq
+               &_systat[1].counts.cputime[6],	// steal
+// FIXME: store scanned times in cputime in scan order, not in display order!
+               &_systat[1].counts.cputime[8],	// guest
+               &_systat[1].counts.cputime[9]	// guest-nice
+        );
+    }
+    else if (_linuxver >= 2006011) {
         // have available iowait, steal
         // skip irq, softirq (derived below)
         // The counts are kernel jiffies spent in each state since boot, always increasing.
@@ -1298,25 +1331,33 @@ void delta_stats( )
 {
     double t;
     int i, j;
-    
-    /* convert cpu time used (in jiffies) into percent (measured in ticks @HZ) */
-    /* The times are for all cpu cores total, we do not read the per-core stats */
+    // linux counts %cpu based on the number of virtual cores
+    double ncpu = _systat[1].counts.sysinfo.nthreads;
+
+    /* convert cpu time used (in jiffies) into core percent */
+    /* The times we read are for all cpu cores total, we do not read the per-core stats, */
+    /* so cpuuse can exceed 100% on multi-core systems */
+    /* t counts total reported jiffies, but compute them instead */
     t = 0;
     double interval = fptime() - _LAST_SAMPLE;
-    for (i=0; i<7; i++) {
+    double intervaljiffies = _hz * interval;            /* jiffies/second * seconds/interval */
+    int systemjiffies = intervaljiffies * ncpu;         /* total jiffies in all cores over interval */
+    for (i=0; i<lengthof(_systat[1].counts.cputime); i++) {
         /* v = (jiffies counted / jiffies per sampling interval) * 100% */
         double njiffies = (_systat[1].counts.cputime[i] - _systat[0].counts.cputime[i]);
         double maxjiffies = HZ * interval;  /* jiffies/second * seconds/interval */
         double v = njiffies / maxjiffies * 100.0;
+        // double v = njiffies / intervaljiffies * 100.0;
 	_systat[0].deltas.cpuuse[i] = v;
 	t += v;
     }
-    /* Normalize the times to 0..100% of the total available time in this interval.
-     * (also account for polling period flutter, multi-core, or job suspended) */
-    /* We keep 0-100% normalized times in cputime[], and summed % time in cpuuse[] */
+
+    /* Also track the fraction of total available system cpu time used in this interval.
+     * This measurement can never exceed 100% */
     double s = 100.0 / t;
-    for (i=0; i<7; i++) {
+    for (i=0; i<lengthof(_systat[0].deltas.cputime); i++) {
         _systat[0].deltas.cputime[i] = _systat[0].deltas.cpuuse[i] * s;
+        // _systat[0].deltas.cputime[i] = _systat[0].deltas.cpuuse[i] / ncpu;
     }
 
     _systat[0].deltas.newprocs = _systat[1].counts.nlastpid -
@@ -1447,6 +1488,27 @@ int show_stats( )
     mvprintw(r++, PAGER_COL-1, "%s cache", shownum(8, _systat[0].counts.memstats[5]));
     mvprintw(r++, PAGER_COL-1, "%s free", shownum(8, _systat[0].counts.memstats[6]));
     mvprintw(r++, PAGER_COL-1, "%s buf", shownum(8, _systat[0].counts.memstats[13]));
+
+// TODO: top seems to report higher % cpu used than systat, why?
+// TODO: also, barchart can show 100% usage with only 68% added up (sys + nice) => one of the times included in another?
+//   top: 3%u, 15%s (system-sec, ie 72% and 360% core-sec); single cpu100 28%
+//   systat: 40%u, 230%s (core-sec); single 14% + 55%
+// weird: 6x cpu100 mapped to physical cores 1-6 each were using only 8% cpu ?? (86% idle)
+//        6x cpu100 unmapped use 270%s + 40%u (75% idle), and yes 6c is 25% of 24t (but no iowait, where is the missing time?)
+//           top shows 6x 16% cpu (tot sys 120%), which seems wrong! sys 75% idle, each core 2%u + 24%s
+//           top is wrong: 120% cpu tot by procs, but 600% by overall summary (and 600% is correct)
+//           systat is wrong, shows 330% u+s, but barchart shows 25% busy
+// weird: cpu usage seems depent on startup? sometimes steady 440,, other times steady 280
+// counting 10 sec in /proc/stat:
+//   cpu  638032678 20029 173760914 43499255070 23839553 0 16327307 0 539352743 0
+//   cpu  638033478 20029 173766323 43499272661 23839556 0 16327307 0 539352811 0
+//        u=800           s=5409    idle=17591  iowait=3              guest=68
+//        = 8 + 54 sec busy out of 20; 80%u and 540% core-sec
+// counting 20 sec in /proc/stat:
+//   cpu  638561589 20029 177410561 43511078683 23841839 0 16327403 0 539407329 0
+//   cpu  638563103 20029 177421488 43511113944 23841847 0 16327404 0 539407476 0
+//        u=1514    nice  sys=10927 idle=35261  iow=8  irq sofirq=1 st guest=147
+//        = 75%u and 546% core-sec
 
     fmt = "%6s%%s%6s%%q%6s%%u%6s%%n%6s%%i%6s%%w";
     mvprintw(10, 0, fmt,
@@ -1673,6 +1735,7 @@ int main( int ac, char *av[] )
     _LAST_SAMPLE = _btime;
     _exec_start_delta = get_exec_drift(_btime);
     readfile("/etc/hostname", _hostname, sizeof(_hostname));
+    _hz = gethz();
 
     _win = initscr();
     if (!_win) die(2);
