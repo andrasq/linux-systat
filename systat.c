@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.15.0"
+#define VERSION "v0.15.1"
 
 /**
 
@@ -268,6 +268,7 @@ static char _nnet = 0;
 
 double _INTERVAL = 0;
 double _LAST_SAMPLE = 0;
+int _mustclear = 0;
 int PAGER_COL = 50;
 int INTR_COL = 50 + 13;
 int DISKS_ROW = 18;
@@ -288,6 +289,8 @@ void on_winch( )
     if (PAGER_COL > 60) PAGER_COL = 60;
     INTR_COL = PAGER_COL + 13;
     DISKS_ROW = (W_LINES >= 28) ? 22 : (W_LINES >= 26) ? 20 : 18;
+
+    _mustclear = 1;
 }
 
 static int _had_hup = 0;
@@ -397,6 +400,19 @@ static char* format_timediff( double diff ) {
     // sprintf(buf, "%dd %02d:%02d:%02d", days, hrs, min, sec);
     sprintf(buf, "%dd %02d:%02d", days, hrs, min);
     return buf;
+}
+
+/* print to the screen clipped to between the columns x and x2 */
+static void putline( int y, int x, int x2, char *fmt, ... ) {
+    char linebuf[400];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(linebuf, sizeof(linebuf), fmt, ap);
+    // mvaddchstr mangles the line
+    // FIXME: race condition: as window is being resized the W_COLUMNS changes,
+    // causing the wrong line end being used and wrapping anyway
+    if (x2 == 0) x2 = W_COLUMNS;
+    mvprintw(y, x, "%-.*s", x2 - x, linebuf);
 }
 
 struct scaletab {
@@ -1352,14 +1368,15 @@ int show_stats( )
     int i, j, r, n, rowi, coli;
     double scale, fr;
     char *p, *fmt;
+    char *uptime = format_timediff(fptime() - _btime);
 
     mvprintw(0, 0, VERSION);
     mvprintw(0, 12, "%d users", _systat[0].counts.nusers);
-    mvprintw(0, 23, "Load %5.2f %5.2f %5.2f   ",
+    putline(0, 23, PAGER_COL+3, "Load %5.2f %5.2f %5.2f, up %s   ",
 	   _systat[0].counts.loadavg[0],
 	   _systat[0].counts.loadavg[1],
-	   _systat[0].counts.loadavg[2]);
-    mvprintw(1, 12, "Mark");
+	   _systat[0].counts.loadavg[2],
+           uptime);
 
     // TEST:
     // calling the processors p, cores c, threads t (like dmidecode calls them)
@@ -1373,7 +1390,7 @@ int show_stats( )
         _systat[0].counts.sysinfo.avgmhz / 1000,
         _systat[0].counts.sysinfo.maxmhz / 1000);
 
-    mvprintw(0, PAGER_COL+5, "%.19s.%03d, up %s", ctime(&_systat[0].counts.date), _systat[0].counts.ms, format_timediff(fptime() - _btime));
+    mvprintw(0, PAGER_COL+5, "%.19s.%03d", ctime(&_systat[0].counts.date), _systat[0].counts.ms);
     mvprintw(1, PAGER_COL+5+2, "[%s]", _hostname);
 
     move(3,0);
@@ -1489,7 +1506,7 @@ int show_stats( )
 	    strncpy(buf, _intrnames[i], sizeof(buf) - 1);
 	    if (W_COLUMNS - INTR_COL - 11 < sizeof(buf)) buf[W_COLUMNS - INTR_COL - 11] = '\0';
             else buf[sizeof(buf) - 1] = '\0';
-            mvprintw(r++, INTR_COL, " %4s %s %.32s",
+            putline(r++, INTR_COL, 0, " %4s %s %.32s",
                 shownum(4, _systat[0].deltas.intr[i]), _intrnums[i], buf);
 	}
     }
@@ -1672,6 +1689,8 @@ int main( int ac, char *av[] )
 	gather_stats(loop_count);
 	int now = fptime();
 	delta_stats();
+        // clear after window size changes
+        if (_mustclear) clear();
 	show_stats();
 	_LAST_SAMPLE = now;
 	refresh();
