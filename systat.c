@@ -331,13 +331,13 @@ struct system_stats_s {
             double avgmhz;
         } sysinfo;
 	/* cpu usage */
-	unsigned long cputime[7];	/* sys, intr, user, nice, idle, iowait, steal */
+	unsigned long cputime[10];	/* sys, intr, user, user-nice, idle, iowait, irq, softirq, steal, guest, guest-nice */
 	unsigned long pager[2];		/* in, out */
 	unsigned long swapper[2];	/* in, out */
 	unsigned long faults[2];	/* Linux: minflt majflt */
 	unsigned long ctxt[2];		/* csw, trp */
 	ullong        totintr;		/* total interrupts since boot */
-	ullong        intr[100];	/* interrupts from irq 0 .. 15 */
+	ullong        intr[200];	/* interrupts from irq 0 .. 15 */
 	unsigned long vm[6];		/* vss rss data stk exe lib */
 	unsigned long procs[5];		/* r p d s w */
         /* network activity */
@@ -353,8 +353,8 @@ struct system_stats_s {
 // TODO: read stats into _systat[1] by symbolic name eg VMSTAT_PGPGIN,
 //       compute values for display by symbolic name later.
     struct {
-	float cputime[10];      /* >= 2.6.33: usr,nice,sys,idle,iow,irq,softirq,steal,guest,guestnice */
-	float cpuuse[10];
+	double cputime[10];     /* >= 2.6.33: usr,nice,sys,idle,iow,irq,softirq,steal,guest,guestnice */
+	double cpuuse[10];
 	ullong newprocs;
 	ullong pager[2];
 	ullong swapper[2];
@@ -960,6 +960,7 @@ int gather_stats(long loop_count)
                                                 // skip softirq
                &_systat[1].counts.cputime[6],	// steal
 // FIXME: store scanned times in cputime in scan order, not in display order!
+// or use symbolic names for the array offsets
                &_systat[1].counts.cputime[8],	// guest
                &_systat[1].counts.cputime[9]	// guest-nice
         );
@@ -1341,15 +1342,15 @@ void delta_stats( )
     int i, j;
     // linux counts %cpu based on the number of virtual cores
     double ncpu = _systat[1].counts.sysinfo.nthreads;
+    double interval = fptime() - _LAST_SAMPLE;
 
-    /* convert cpu time used (in jiffies) into core percent */
+    /* Convert cpu time used (in jiffies) into core percent, to use in the %s %u %i. */
     /* The times we read are for all cpu cores total, we do not read the per-core stats, */
     /* so cpuuse can exceed 100% on multi-core systems */
     /* t counts total reported jiffies, but compute them instead */
     t = 0;
-    double interval = fptime() - _LAST_SAMPLE;
     double intervaljiffies = _hz * interval;            /* jiffies/second * seconds/interval */
-    int systemjiffies = intervaljiffies * ncpu;         /* total jiffies in all cores over interval */
+    int systemjiffies = intervaljiffies * ncpu;         /* total core-jiffies available over the interval */
     for (i=0; i<lengthof(_systat[1].counts.cputime); i++) {
         /* v = (jiffies counted / jiffies per sampling interval) * 100% */
         double njiffies = (_systat[1].counts.cputime[i] - _systat[0].counts.cputime[i]);
@@ -1361,7 +1362,7 @@ void delta_stats( )
     }
 
     /* Also track the fraction of total available system cpu time used in this interval.
-     * This measurement can never exceed 100% */
+     * This measurement can never exceed 100%.  This count is used for the bar chart. */
     double s = 100.0 / t;
     for (i=0; i<lengthof(_systat[0].deltas.cputime); i++) {
         _systat[0].deltas.cputime[i] = _systat[0].deltas.cpuuse[i] * s;
@@ -1511,13 +1512,23 @@ int show_stats( )
 // counting 10 sec in /proc/stat:
 //   cpu  638032678 20029 173760914 43499255070 23839553 0 16327307 0 539352743 0
 //   cpu  638033478 20029 173766323 43499272661 23839556 0 16327307 0 539352811 0
-//        u=800           s=5409    idle=17591  iowait=3              guest=68
+//        u=800           s=5409    idle=17591  iowait=3              guest=68          == 23871 (24c * 10s * 100/s)
 //        = 8 + 54 sec busy out of 20; 80%u and 540% core-sec
 // counting 20 sec in /proc/stat:
 //   cpu  638561589 20029 177410561 43511078683 23841839 0 16327403 0 539407329 0
 //   cpu  638563103 20029 177421488 43511113944 23841847 0 16327404 0 539407476 0
-//        u=1514    nice  sys=10927 idle=35261  iow=8  irq sofirq=1 st guest=147
+//        u=1514    nice  sys=10927 idle=35261  iow=8  irq sofirq=1 st guest=147        == 47858 (24c * 20s * 100/s)
 //        = 75%u and 546% core-sec
+// 10 sec of 100% user-busy cpu100 (top shows 6x 100%)
+//   cpu  639302960 20029 182186006 43526699918 23844902 0 16328636 0 539475818 0
+//   cpu  639309081 20029 182186050 43526717793 23844908 0 16328840 0 539475872 0
+//        u=6121    nice  sys=44    idle=17875  iow=6  irq sof=204 st guest=54          == 24304 (24c * 10s * 100/s)
+//        = 600%u and 4%system, 1787% idle
+// 10 sec of 4x 100% cpu, one niced:
+//   cpu  640186946 26188 182202272 43534263203 23846764 0 16349114 0 539500779 0
+//   cpu  640190084 27192 182202318 43534283088 23846769 0 16349274 0 539500834 0
+//        u=3138    n=1004 sys=46   idle=19885  iow=5  irq sof=160 st guest=55          == 24293
+//        => user% and nice% are mutually exclusive
 
     fmt = "%6s%%s%6s%%q%6s%%u%6s%%n%6s%%i%6s%%w";
     mvprintw(10, 0, fmt,
@@ -1615,6 +1626,7 @@ int show_stats( )
     n = (PAGER_COL - 6) / 6 ;
     if (DISKS_ROW >= 18) n += 2;
     if (n > 16) n = 16;
+// FIXME: this is the wrong interval!  Want when samples were collected, not now
     double interval = fptime() - _LAST_SAMPLE;
     for (coli=0, i=0; i<n; i++) {
         double busy = _systat[0].deltas.diskinfo[i][3] / (interval * 1000) * 100;
@@ -1667,6 +1679,8 @@ int usage( int ecode )
 	"  -h    show this message\n"
 	"  -V    show version and exit\n"
 	"\n"
+        "While running, q exits, ^Z suspends, ' ' space pauses/unpauses.\n"
+        "\n"
 	"Written by Andras Radics to mimic the BSD 2.2 \"% systat -vm\" command.\n"
 	"Motto: Linux is Unix. GNU's Not Unix.\n"
 	"";
@@ -1776,6 +1790,7 @@ int main( int ac, char *av[] )
             fpsleep(.01);
 
 	    switch(getch()) {
+	    case 'Q':
 	    case 'q':
 		done = 1;
 		break;
