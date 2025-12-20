@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.15.4"
+#define VERSION "v0.16.0"
 
 /**
 
@@ -331,7 +331,7 @@ struct system_stats_s {
             double avgmhz;
         } sysinfo;
 	/* cpu usage */
-	unsigned long cputime[10];	/* sys, intr, user, user-nice, idle, iowait, irq, softirq, steal, guest, guest-nice */
+	ullong cpujiffies[10];		/* sys, intr, user, user-nice, idle, iowait, irq, softirq, steal, guest, guest-nice */
 	unsigned long pager[2];		/* in, out */
 	unsigned long swapper[2];	/* in, out */
 	unsigned long faults[2];	/* Linux: minflt majflt */
@@ -354,9 +354,9 @@ struct system_stats_s {
 // TODO: read stats into _systat[1] by symbolic name eg VMSTAT_PGPGIN,
 //       compute values for display by symbolic name later.
     struct {
-	double cputime[10];     /* >= 2.6.33: usr,nice,sys,idle,iow,irq,softirq,steal,guest,guestnice */
+	ullong cpujiffies[10];  /* >= 2.6.33: usr,nice,sys,idle,iow,irq,softirq,steal,guest,guestnice */
 	double corepct[10];     // %cpu scaled to 1 core
-	double totpct[10];      // %cpu scaled to total system cores
+	double syspct[10];      // %cpu scaled to total system cores
 	double cpuuse[10];
 	ullong newprocs;
 	ullong pager[2];
@@ -953,19 +953,20 @@ int gather_stats(long loop_count)
 // FIXME: p == NULL
     if (_linuxver >= 2006033) {
         // scan the summed cpu usage
-        sscanf(p, " cpu %lu %lu %lu %lu %lu %*u %*u %lu %lu %lu",
-               &_systat[1].counts.cputime[2],	// user
-               &_systat[1].counts.cputime[3],	// nice
-               &_systat[1].counts.cputime[0],	// system
-               &_systat[1].counts.cputime[4],	// idle
-               &_systat[1].counts.cputime[5],	// iowait
-                                                // skip irq
-                                                // skip softirq
-               &_systat[1].counts.cputime[6],	// steal
-// FIXME: store scanned times in cputime in scan order, not in display order!
+        // user, user-nice, system, idle, iowait, irq, softirq, steal, guest, guest-nice
+        sscanf(p, " cpu %llu %llu %llu %llu %llu %*u %*u %llu %llu %llu",
+               &_systat[1].counts.cpujiffies[2],	// user
+               &_systat[1].counts.cpujiffies[3],	// nice
+               &_systat[1].counts.cpujiffies[0],	// system
+               &_systat[1].counts.cpujiffies[4],	// idle
+               &_systat[1].counts.cpujiffies[5],	// iowait
+                                                        // skip irq
+                                                        // skip softirq
+               &_systat[1].counts.cpujiffies[6],	// steal
+// FIXME: store scanned times in cpujiffies in scan order, not in display order!
 // or use symbolic names for the array offsets
-               &_systat[1].counts.cputime[8],	// guest
-               &_systat[1].counts.cputime[9]	// guest-nice
+               &_systat[1].counts.cpujiffies[8],	// guest
+               &_systat[1].counts.cpujiffies[9]	// guest-nice
         );
     }
     else if (_linuxver >= 2006011) {
@@ -973,23 +974,23 @@ int gather_stats(long loop_count)
         // skip irq, softirq (derived below)
         // The counts are kernel jiffies spent in each state since boot, always increasing.
         // The counts should always total seconds_since_boot * HZ (jiffies per second)
-        sscanf(p, " cpu %lu %lu %lu %lu %lu %*u %*u %lu",
-               &_systat[1].counts.cputime[2],	// user
-               &_systat[1].counts.cputime[3],	// nice
-               &_systat[1].counts.cputime[0],	// system
-               &_systat[1].counts.cputime[4],	// idle
-               &_systat[1].counts.cputime[5],	// iowait
-               &_systat[1].counts.cputime[6]	// steal
+        sscanf(p, " cpu %llu %llu %llu %llu %llu %*u %*u %llu",
+               &_systat[1].counts.cpujiffies[2],	// user
+               &_systat[1].counts.cpujiffies[3],	// nice
+               &_systat[1].counts.cpujiffies[0],	// system
+               &_systat[1].counts.cpujiffies[4],	// idle
+               &_systat[1].counts.cpujiffies[5],	// iowait
+               &_systat[1].counts.cpujiffies[6]		// steal
                                                 // TODO: guest
                                                 // TODO: guest-nice
         );
     }
     else {
-        sscanf(p, " cpu %lu %lu %lu %lu",
-               &_systat[1].counts.cputime[2],
-               &_systat[1].counts.cputime[3],
-               &_systat[1].counts.cputime[0],
-               &_systat[1].counts.cputime[4]);
+        sscanf(p, " cpu %llu %llu %llu %llu",
+               &_systat[1].counts.cpujiffies[2],
+               &_systat[1].counts.cpujiffies[3],
+               &_systat[1].counts.cpujiffies[0],
+               &_systat[1].counts.cpujiffies[4]);
     }
     if (_linuxver < 2006000) {
 	p = strstr(buf, "\npage ");
@@ -1342,81 +1343,42 @@ int gather_stats(long loop_count)
 void delta_stats( )
 {
     double totjiffies = 0;
-    double ncpu = _systat[1].counts.sysinfo.nthreads;   /* number of linux cores for %cpu */
+    double ncpu = _systat[1].counts.sysinfo.nthreads;   /* number of linux cores for %sys */
     double interval = fptime() - _LAST_SAMPLE;          /* sampling interval seconds */
     double intervaljiffies = _hz * interval;            /* jiffies/second * seconds/interval */
     double sysjiffies = intervaljiffies * ncpu;         /* total jiffies available across all cores */
+    double fractionOfAllCores = 1 / ncpu; 
     int i, j;
 
-#if 1
-    // aha! this works!! the problem was `mark += pause` which did not account for (a lot of) processing time
-
-// FIXME: rename cputime to eg cpujiffies
     /* Calculate the cpu jiffies used over the sampling interval. */
-    for (i=0; i<lengthof(_systat[1].counts.cputime); i++) {
-        double njiffies = (_systat[1].counts.cputime[i] - _systat[0].counts.cputime[i]);
-        _systat[0].deltas.cputime[i] = njiffies;
+    for (i=0; i<lengthof(_systat[1].counts.cpujiffies); i++) {
+        double njiffies = (_systat[1].counts.cpujiffies[i] - _systat[0].counts.cpujiffies[i]);
+        _systat[0].deltas.cpujiffies[i] = njiffies;
         totjiffies += njiffies;
     }
 
-// FIXME: compute into corepct
-    double fractionOfAllCores = 1 / ncpu; // intervaljiffies / sysjiffies;
-    for (i=0; i<lengthof(_systat[1].counts.cputime); i++) {
-        double njiffies = _systat[0].deltas.cputime[i];
+    /* Compute %cpu used from the jiffies. */
+    for (i=0; i<lengthof(_systat[1].counts.cpujiffies); i++) {
+        double njiffies = _systat[0].deltas.cpujiffies[i];
 
         /* Convert core-jiffies used into core-percent, to use in the %s %u %i fields. */
         /* The times we read are for all cpu cores total, we do not read the per-core stats, */
-        /* so cpuuse can exceed 100% on multi-core systems */
-	_systat[0].deltas.cpuuse[i] = njiffies / intervaljiffies * 100.0;
+        /* so corepct can exceed 100% on multi-core systems */
         _systat[0].deltas.corepct[i] = njiffies / intervaljiffies * 100.0;
 
         /* Also track the fraction of total available system cpu time used in this interval.
          * This measurement can never exceed 100%.  This count is used for the bar chart. */
-        _systat[0].deltas.cputime[i] = _systat[0].deltas.cpuuse[i] * fractionOfAllCores;
-        _systat[0].deltas.totpct[i] = _systat[0].deltas.corepct[i] * fractionOfAllCores;
+        _systat[0].deltas.syspct[i] = _systat[0].deltas.corepct[i] * fractionOfAllCores;;
     }
-
-#else
-    // FIXME: quite accidentally this displays the correct %u %s %n values! (but 0.0%i idle)
-
-    /* Convert cpu time used (in jiffies) into core percent, to use in the %s %u %i. */
-    /* The times we read are for all cpu cores total, we do not read the per-core stats, */
-    /* so cpuuse can exceed 100% on multi-core systems */
-    /* t counts total reported jiffies, but compute them instead */
-    totjiffies = 0;
-    for (i=0; i<lengthof(_systat[1].counts.cputime); i++) {
-        /* v = (jiffies counted / jiffies per sampling interval) * 100% */
-        double njiffies = (_systat[1].counts.cputime[i] - _systat[0].counts.cputime[i]);
-        // double maxjiffies = HZ * interval;  /* jiffies/second * seconds/interval */
-        // double v = njiffies / maxjiffies * 100.0;
-        // compute cpuuse as the % of a core-second used, possibly more than 100%
-        double v = njiffies / intervaljiffies * 100.0;
-	_systat[0].deltas.cpuuse[i] = v;
-	totjiffies += v;
-
-        // update cputime to count delta jiffies
-        // FIXME: counts are low if adjusting for the inverval, are spot on if assume 1.00 sec
-        _systat[0].deltas.cpuuse[i] = njiffies / interval / _hz * 100.0;
-    }
-
-    /* Also track the fraction of total available system cpu time used in this interval.
-     * This measurement can never exceed 100%.  This count is used for the bar chart. */
-    double s = 100.0 / totjiffies;
-    for (i=0; i<lengthof(_systat[0].deltas.cputime); i++) {
-        // _systat[0].deltas.cputime[i] = _systat[0].deltas.cpuuse[i] * s;
-        _systat[0].deltas.cputime[i] /= totjiffies * 100;
-    }
-#endif
 
     // do not use lastpid, newer kernels do not assign pids monotonically
     // _systat[0].deltas.newprocs = _systat[1].counts.nlastpid - _systat[0].counts.nlastpid;
     _systat[0].deltas.newprocs = _systat[1].counts.ncreatedprocs - _systat[0].counts.ncreatedprocs;
 
-    _systat[0].deltas.totintr =
-	_systat[1].counts.totintr - _systat[0].counts.totintr;
-    for (i=0; i<lengthof(_systat[0].deltas.intr); i++)
-	_systat[0].deltas.intr[i] =
-	    _systat[1].counts.intr[i] - _systat[0].counts.intr[i];
+    _systat[0].deltas.totintr = _systat[1].counts.totintr - _systat[0].counts.totintr;
+    for (i=0; i<lengthof(_systat[0].deltas.intr); i++) {
+	_systat[0].deltas.intr[i] = _systat[1].counts.intr[i] - _systat[0].counts.intr[i];
+    }
 
     for (i=0; i<2; i++) {
 	_systat[0].deltas.pager[i] = _systat[1].counts.pager[i] -
@@ -1508,7 +1470,7 @@ int show_stats( )
     mvprintw(8, 2, "%s", shownum(4, _systat[0].counts.procs[0] - 1));   // do not count ourselves as a running process
     // mvprintw(8, 6, "%s", shownum(4, _systat[0].counts.procs[1]));
     // time spent in i/o wait (ie "page wait") normalized to number of threads (ie vcpus)
-    mvprintw(8, 6, "%s", shownum(4, _systat[0].deltas.cputime[5] / 100.0 * _systat[0].counts.sysinfo.nthreads + 0.5));
+    mvprintw(8, 6, "%s", shownum(4, _systat[0].deltas.syspct[5] / 100.0 * _systat[0].counts.sysinfo.nthreads + 0.5));
     mvprintw(8, 10, "%s", shownum(4, _systat[0].counts.procs[2]));
     mvprintw(8, 14, "%s", shownum(4, _systat[0].counts.procs[3]));
     mvprintw(8, 18, "%s", shownum(4, _systat[0].counts.procs[4]));
@@ -1538,31 +1500,6 @@ int show_stats( )
     mvprintw(r++, PAGER_COL-1, "%s free", shownum(8, _systat[0].counts.memstats[6]));
     mvprintw(r++, PAGER_COL-1, "%s buf", shownum(8, _systat[0].counts.memstats[13]));
 
-// TODO: top seems to report higher % cpu used than systat, why?
-// TODO: also, barchart can show 100% usage with only 68% added up (sys + nice) => one of the times included in another?
-//   top: 3%u, 15%s (system-sec, ie 72% and 360% core-sec); single cpu100 28%
-//   systat: 40%u, 230%s (core-sec); single 14% + 55%
-// weird: 6x cpu100 mapped to physical cores 1-6 each were using only 8% cpu ?? (86% idle)
-//        6x cpu100 unmapped use 270%s + 40%u (75% idle), and yes 6c is 25% of 24t (but no iowait, where is the missing time?)
-//           top shows 6x 16% cpu (tot sys 120%), which seems wrong! sys 75% idle, each core 2%u + 24%s
-//           top is wrong: 120% cpu tot by procs, but 600% by overall summary (and 600% is correct)
-//           systat is wrong, shows 330% u+s, but barchart shows 25% busy
-// weird: cpu usage seems depent on startup? sometimes steady 440,, other times steady 280
-// counting 10 sec in /proc/stat:
-//   cpu  638032678 20029 173760914 43499255070 23839553 0 16327307 0 539352743 0
-//   cpu  638033478 20029 173766323 43499272661 23839556 0 16327307 0 539352811 0
-//        u=800           s=5409    idle=17591  iowait=3              guest=68          == 23871 (24c * 10s * 100/s)
-//        = 8 + 54 sec busy out of 20; 80%u and 540% core-sec
-// counting 20 sec in /proc/stat:
-//   cpu  638561589 20029 177410561 43511078683 23841839 0 16327403 0 539407329 0
-//   cpu  638563103 20029 177421488 43511113944 23841847 0 16327404 0 539407476 0
-//        u=1514    nice  sys=10927 idle=35261  iow=8  irq sofirq=1 st guest=147        == 47858 (24c * 20s * 100/s)
-//        = 75%u and 546% core-sec
-// 10 sec of 100% user-busy cpu100 (top shows 6x 100%)
-//   cpu  639302960 20029 182186006 43526699918 23844902 0 16328636 0 539475818 0
-//   cpu  639309081 20029 182186050 43526717793 23844908 0 16328840 0 539475872 0
-//        u=6121    nice  sys=44    idle=17875  iow=6  irq sof=204 st guest=54          == 24304 (24c * 10s * 100/s)
-//        = 600%u and 4%system, 1787% idle
 // 10 sec of 4x 100% cpu, one niced:
 //   cpu  640186946 26188 182202272 43534263203 23846764 0 16349114 0 539500779 0
 //   cpu  640190084 27192 182202318 43534283088 23846769 0 16349274 0 539500834 0
@@ -1571,16 +1508,17 @@ int show_stats( )
 
     fmt = "%6s%%s%6s%%q%6s%%u%6s%%n%6s%%i%6s%%w";
     mvprintw(10, 0, fmt,
-	    showfloat(6, 1, _systat[0].deltas.cpuuse[0]),	/* system */
-	    showfloat(6, 1, _systat[0].deltas.cpuuse[1]),	/* interrupt */
-	    showfloat(6, 1, _systat[0].deltas.cpuuse[2]),	/* user not including nice */
-	    showfloat(6, 1, _systat[0].deltas.cpuuse[3]),	/* nice */
-	    showfloat(6, 1, _systat[0].deltas.cputime[4]),	/* idle -- as percent of total system time */
-	    showfloat(6, 1, _systat[0].deltas.cpuuse[5]));	/* iowait */
+	    showfloat(6, 1, _systat[0].deltas.corepct[0]),	/* system */
+	    showfloat(6, 1, _systat[0].deltas.corepct[1]),	/* interrupt */
+	    showfloat(6, 1, _systat[0].deltas.corepct[2]),	/* user not including nice */
+	    showfloat(6, 1, _systat[0].deltas.corepct[3]),	/* nice */
+	    // showfloat(6, 1, _systat[0].deltas.syspct[4]),	/* idle -- as percent of total system time */
+            showfloat(5, 0, _systat[0].deltas.corepct[4]),	/* idle -- normalized to 1 core */
+	    showfloat(6, 1, _systat[0].deltas.corepct[5]));	/* iowait */
                                                 /* TODO: guest, guest-nice */
 
     if (PAGER_COL >= 56) {
-        mvprintw(10, 6*8, "%6s%%t", showfloat(6, 1, _systat[0].deltas.cputime[6]));	/* steal */
+        mvprintw(10, 6*8, "%6s%%t", showfloat(6, 1, _systat[0].deltas.syspct[6]));	/* steal */
         /* TODO: guest, guest-nice */
     }
 
@@ -1601,19 +1539,19 @@ int show_stats( )
     move(12,0);
     /* TODO: precompute the bar graph, and output it with a single call */
     fr = i = 0;
-    fr += scale * _systat[0].deltas.cputime[0];
+    fr += scale * _systat[0].deltas.syspct[0];
     for (; (i+.5)<fr; i++) addch('=');		/* kernel (system) */
-    fr += scale * _systat[0].deltas.cputime[1];
+    fr += scale * _systat[0].deltas.syspct[1];
     for (; (i+.5)<fr; i++) addch('+');		/* interrupt handling */
-    fr += scale * _systat[0].deltas.cputime[2];
+    fr += scale * _systat[0].deltas.syspct[2];
     for (; (i+.5)<fr; i++) addch('>');		/* user */
-    fr += scale * _systat[0].deltas.cputime[3];
+    fr += scale * _systat[0].deltas.syspct[3];
     for (; (i+.5)<fr; i++) addch('-');		/* nice (lowered prio, >0) */
-    fr += scale * _systat[0].deltas.cputime[5];
+    fr += scale * _systat[0].deltas.syspct[5];
     for (; (i+.5)<fr; i++) addch('.');		/* iowait */
-    fr += scale * _systat[0].deltas.cputime[6];
+    fr += scale * _systat[0].deltas.syspct[6];
     for (; (i+.5)<fr; i++) addch('$');		/* cpu steal */
-    fr += scale * _systat[0].deltas.cputime[4];
+    fr += scale * _systat[0].deltas.syspct[4];
     for (; (i+.5)<fr; i++) addch(' ');		/* idle */
 
     // Interrupts
