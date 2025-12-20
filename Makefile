@@ -1,4 +1,4 @@
-systat: systat.c
+systat: systat.c Makefile
 	cc -Os ${CFLAGS} -o systat systat.c -lncurses -ltinfo -lm
 
 static:
