@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.15.3"
+#define VERSION "v0.15.4"
 
 /**
 
@@ -349,11 +349,14 @@ struct system_stats_s {
 
 // FIXME: make _systat_0, _systat_1 and _deltas 3 instances of the same struct!
 // TODO: rename _systat.counts[0] to _nprevious, _systat.counts[1] to _ncurrent, _systat.deltas to _deltas
+// TODO: make counts[0], counts[1] and deltas each be the same struct
 // FIXME: to guarantee that array sizes remain in sync
 // TODO: read stats into _systat[1] by symbolic name eg VMSTAT_PGPGIN,
 //       compute values for display by symbolic name later.
     struct {
 	double cputime[10];     /* >= 2.6.33: usr,nice,sys,idle,iow,irq,softirq,steal,guest,guestnice */
+	double corepct[10];     // %cpu scaled to 1 core
+	double totpct[10];      // %cpu scaled to total system cores
 	double cpuuse[10];
 	ullong newprocs;
 	ullong pager[2];
@@ -1338,7 +1341,7 @@ int gather_stats(long loop_count)
 
 void delta_stats( )
 {
-    double t;
+    double totjiffies = 0;
     int i, j;
     // linux counts %cpu based on the number of virtual cores
     double ncpu = _systat[1].counts.sysinfo.nthreads;
@@ -1348,25 +1351,30 @@ void delta_stats( )
     /* The times we read are for all cpu cores total, we do not read the per-core stats, */
     /* so cpuuse can exceed 100% on multi-core systems */
     /* t counts total reported jiffies, but compute them instead */
-    t = 0;
+    totjiffies = 0;
     double intervaljiffies = _hz * interval;            /* jiffies/second * seconds/interval */
     int systemjiffies = intervaljiffies * ncpu;         /* total core-jiffies available over the interval */
     for (i=0; i<lengthof(_systat[1].counts.cputime); i++) {
         /* v = (jiffies counted / jiffies per sampling interval) * 100% */
         double njiffies = (_systat[1].counts.cputime[i] - _systat[0].counts.cputime[i]);
-        double maxjiffies = HZ * interval;  /* jiffies/second * seconds/interval */
-        double v = njiffies / maxjiffies * 100.0;
-        // double v = njiffies / intervaljiffies * 100.0;
+        // double maxjiffies = HZ * interval;  /* jiffies/second * seconds/interval */
+        // double v = njiffies / maxjiffies * 100.0;
+        // compute cpuuse as the % of a core-second used, possibly more than 100%
+        double v = njiffies / intervaljiffies * 100.0;
 	_systat[0].deltas.cpuuse[i] = v;
-	t += v;
+	totjiffies += v;
+
+        // update cputime to count delta jiffies
+        // FIXME: counts are low if adjusting for the inverval, are spot on if assume 1.00 sec
+        _systat[0].deltas.cpuuse[i] = njiffies / interval / _hz * 100.0;
     }
 
     /* Also track the fraction of total available system cpu time used in this interval.
      * This measurement can never exceed 100%.  This count is used for the bar chart. */
-    double s = 100.0 / t;
+    double s = 100.0 / totjiffies;
     for (i=0; i<lengthof(_systat[0].deltas.cputime); i++) {
-        _systat[0].deltas.cputime[i] = _systat[0].deltas.cpuuse[i] * s;
-        // _systat[0].deltas.cputime[i] = _systat[0].deltas.cpuuse[i] / ncpu;
+        // _systat[0].deltas.cputime[i] = _systat[0].deltas.cpuuse[i] * s;
+        _systat[0].deltas.cputime[i] /= totjiffies * 100;
     }
 
     // do not use lastpid, newer kernels do not assign pids monotonically
@@ -1783,7 +1791,7 @@ int main( int ac, char *av[] )
 
 	if (pause == 0.0) break;
 
-        mark += pause;
+        mark = now + pause;
         if (mark < fptime()) mark = fptime();
 
         do {
