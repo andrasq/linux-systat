@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.16.0"
+#define VERSION "v0.16.1"
 
 /**
 
@@ -255,7 +255,7 @@ time_t _btime = 0;              /* set by main */
 double _exec_start_delta = 0.0; /* computed by main */
 ullong _pow10[11] = { 1, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10 };   /* int bound of value of N digits */
 char _hostname[200];
-int _hz;                        /* getconf CLK_TCK; man 7 time: typically 100 */
+long _hz;                       /* sysconf(_SC_CLK_TCK), aka USER_HZ, typically 100 */
 
 static WINDOW *_win;		/* initialized by main */
 
@@ -1735,7 +1735,7 @@ int main( int ac, char *av[] )
     _LAST_SAMPLE = _btime;
     _exec_start_delta = get_exec_drift(_btime);
     readfile("/etc/hostname", _hostname, sizeof(_hostname));
-    _hz = gethz();
+    _hz = sysconf(_SC_CLK_TCK);
 
     _win = initscr();
     if (!_win) die(2);
