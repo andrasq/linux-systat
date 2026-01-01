@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.16.1"
+#define VERSION "v0.16.2"
 
 /**
 
@@ -240,6 +240,7 @@ Free: count of pages on the free list.
 
 #define ulong unsigned long
 #define uint unsigned int
+#define llong long long
 #define ullong unsigned long long
 
 ullong scan_ullong( char *buf, char *patt ) {
@@ -317,6 +318,23 @@ struct system_stats_s {
 	time_t		date;
         int             ms;
 	/* memory */
+        struct {
+            // these fields are in the same order as in the file
+            llong       MemTotal;
+            llong       MemFree;
+            llong       MemAvailable;
+            llong       Buffers;
+            llong       Cached;
+            llong       SwapCached;
+            llong       Active;
+            llong       Inactive;
+            llong       Unevictable;
+            llong       SwapTotal;
+            llong       SwapFree;
+            llong       Dirty;
+            llong       Mapped;
+            llong       Shmem;          // mem used by tmpfs filesystems
+        } procmeminfo;
 // TODO: make meminfo two flat arrays of 4
 	ullong          meminfo[2][2][2];
 	ullong          memfree;
@@ -591,9 +609,31 @@ int readfile( const char *filename, void *buf, int nbytes )
     return nb;
 }
 
+/*
+ * Find Name: and extract the numeric ullong value following it, return an offset past the name
+ * This works for e.g. /proc/meminfo and similar layouts
+ * Note that strstr() can more quickly skip spaces and digits than we could.
+ */
+const char *readllong( const char *buf, const char *name, llong *value ) {
+    const char *ep = buf, *p = strstr(buf, name);
+    if (p) p = strchr(p, ':');
+    if (p) *value = strtoll(p + 1, (char**)&ep, 10);
+    return ep;
+}
+
+/* find name, then find :, then read the value into the double
+ * Returns a pointer into buf past the name.
+ */
+const char *readlfloat( const char *buf, const char *name, double *value ) {
+    const char *ep = buf, *p = strstr(buf, name);
+    if (p) p = strchr(p, ':');
+    if (p) *value = strtod(p + 1, (char**)&ep);
+    return ep;
+}
+
 // TODO: int tailfile( const char *filename, void *buf, int nbytes )
 
-char * startofline( char *buf, char *p ) {
+const char * startofline( const char *buf, const char *p ) {
     if (!p) return p;
     while (p > buf && *p != '\n') p--;
     return p > buf ? ++p : p;
@@ -701,7 +741,8 @@ int gather_stats(long loop_count)
 {
     time_t btime = _btime;
     // 8c/16t /proc/cpuinfo is 24k, size buf
-    char *p, *q, buf[200000], fname[80], *nextp, *nextw;
+    const char *p;
+    char *q, buf[200000], fname[80], *nextp, *nextw;
     ullong i, j, n;
     int have_fault_counts = 0;
     double now = fptime();
@@ -841,46 +882,55 @@ int gather_stats(long loop_count)
 
     /* Mem: usage */
     if (readfile("/proc/meminfo", buf, sizeof(buf)) > 0) {
-        p = strstr(buf, "MemTotal:");
-        if (p) _systat[1].counts.sysinfo.memtotalkb = strtoul(p+9, NULL, 10);
+        // better to / more useful to track: total, rss, swap, free, buffer/cache (ie also free)
 
+        p = buf;
+        p = readllong(p, "MemTotal:",   &_systat[1].counts.procmeminfo.MemTotal);
+        p = readllong(p, "MemFree:",    &_systat[1].counts.procmeminfo.MemFree);
+        p = readllong(p, "MemAvailable:", &_systat[1].counts.procmeminfo.MemAvailable);
+        p = readllong(p, "Buffers:",    &_systat[1].counts.procmeminfo.Buffers);
+        p = readllong(p, "Cached:",     &_systat[1].counts.procmeminfo.Cached);
+        p = readllong(p, "Cached:",     &_systat[1].counts.procmeminfo.SwapCached);
+        p = readllong(p, "Active:",     &_systat[1].counts.procmeminfo.Active);
+        p = readllong(p, "Inactive:",   &_systat[1].counts.procmeminfo.Inactive);
+        p = readllong(p, "Unevictable:", &_systat[1].counts.procmeminfo.Unevictable);
+        p = readllong(p, "SwapTotal:",  &_systat[1].counts.procmeminfo.SwapTotal);
+        p = readllong(p, "SwapFree:",   &_systat[1].counts.procmeminfo.SwapFree);
+        p = readllong(p, "Dirty:",      &_systat[1].counts.procmeminfo.Dirty);
+        p = readllong(p, "Mapped:",     &_systat[1].counts.procmeminfo.Mapped);
+        p = readllong(p, "Shmem:",     &_systat[1].counts.procmeminfo.Shmem);
+
+        _systat[1].counts.sysinfo.memtotalkb = _systat[1].counts.procmeminfo.MemTotal;
+
+// FIXME: tally via symbolic names, not anonymous arrays
         /* Active = Active(anon) + Active(file), ie data pages + file pages */
-        p = strstr(buf, "Active:");
-        //if (p) _systat[1].counts.meminfo[0][0][0] = strtoul(p+7, NULL, 10);
-        if (p) _systat[1].counts.memstats[3] = strtoul(p+7, NULL, 10);
-        // total up active rss instead
-        //if (p) _systat[1].counts.meminfo[0][0][0] = strtoul(p+7, NULL, 10);
-        p = strstr(buf, "Inactive:");
-        if (p) _systat[1].counts.memstats[4] = strtoul(p+9, NULL, 10);
-        p = strstr(buf, "MemFree:");
-        if (p) sscanf(p+8, "%llu", &_systat[1].counts.memfree);
-        if (p) _systat[1].counts.memstats[6] = strtoul(p+8, NULL, 10);
+        // active/inactive is less interesting than rss
+        _systat[1].counts.memstats[3] = _systat[1].counts.procmeminfo.Active;
+        _systat[1].counts.memstats[4] = _systat[1].counts.procmeminfo.Inactive;
+        _systat[1].counts.memstats[6] = _systat[1].counts.procmeminfo.MemFree;
+
+        // ??? there is no MemShared
         //p = strstr(buf, "MemShared:");
         //if (p) sscanf(p+10, "%lu", &_systat[1].counts.meminfo[1][0][1]);
-        p = strstr(buf, "Shmem:");
-        if (p) _systat[1].counts.meminfo[1][0][1] = strtoul(p+6, NULL, 10);
+
+        // Shmem is documented as mem used for tmpfs, so not very useful
+        _systat[1].counts.meminfo[1][0][1] = _systat[1].counts.procmeminfo.Shmem;
+
         // maybe also count ShmemHugePages, ShmemPmdMapped
-        // note: not MemTotal, systat reports on mem held by processes, not total in system
-        //p = strstr(buf, "MemTotal:");
-        //if (p) _systat[1].counts.meminfo[1][0][0] = strtoul(p+10, NULL, 10);
+        // note: BSD systat reports on mem held by processes, not total in system
 
         /* swap activity */
-        p = strstr(buf, "SwapTotal:");
         /* increasing swap used indicates data swapped out */
-        if (p) _systat[1].counts.swapper[1] = strtoul(p+10, NULL, 10);
         /* increasing free swap indicates data swapped in */
-        p = strstr(buf, "SwapFree:");
-        if (p) _systat[1].counts.swapper[0] = strtoul(p+9, NULL, 10);
+        _systat[1].counts.swapper[1] = _systat[1].counts.procmeminfo.SwapTotal;
+        _systat[1].counts.swapper[0] = _systat[1].counts.procmeminfo.SwapFree;
 
         /* other memory stats */
-        p = strstr(buf, "Cached:");
-        if (p) _systat[1].counts.memstats[5] = strtoul(p+7, NULL, 10);
-        p = strstr(buf, "SwapCached:");
-        if (p) _systat[1].counts.memstats[5] += strtoul(p+11, NULL, 10);
-        p = strstr(buf, "Buffers:");
-        if (p) _systat[1].counts.memstats[13] = strtoul(p+8, NULL, 10);
-        p = strstr(buf, "Unevictable:");
-        if (p) _systat[1].counts.memstats[2] = strtoul(p+12, NULL, 10);
+        /* Cached does not include SwapCached */
+        _systat[1].counts.memstats[5] =
+            _systat[1].counts.procmeminfo.Cached + _systat[1].counts.procmeminfo.SwapCached;
+        _systat[1].counts.memstats[13] = _systat[1].counts.procmeminfo.Buffers;
+        _systat[1].counts.memstats[2] = _systat[1].counts.procmeminfo.Unevictable;
     }
 
     /* NOTE: vmstat:nr_shmem is in pages, meminfo:Shmem in kilobytes! (4x more) */
@@ -950,8 +1000,10 @@ int gather_stats(long loop_count)
 
     readfile("/proc/stat", buf, sizeof(buf));
     p = strstr(buf, "cpu ");
+    if (!p) {
 // FIXME: p == NULL
-    if (_linuxver >= 2006033) {
+    }
+    else if (_linuxver >= 2006033) {
         // scan the summed cpu usage
         // user, user-nice, system, idle, iowait, irq, softirq, steal, guest, guest-nice
         sscanf(p, " cpu %llu %llu %llu %llu %llu %*u %*u %llu %llu %llu",
@@ -1208,6 +1260,7 @@ int gather_stats(long loop_count)
                  * Use that info to distinguish "active" (ran in last 20 sec) from inactive */
                 sprintf(fname, "/proc/%s/sched", de->d_name);
                 e = readfile(fname, buf, sizeof(buf));
+// FIXME: just use the kernel aggregate Active/Inactive, do not try to duplicate BSD semantics
                 if (e > 0) {
                     p = strstr(buf, "se.exec_start");
                     now = fptime();
@@ -1272,12 +1325,18 @@ int gather_stats(long loop_count)
 			p = strsep(&s, " \t");
 		}
 
+// FIXME: just use the kernel aggregate Active/Inactive, do not try to duplicate BSD semantics
+// FIXME: count up VmRSS from the per-process /proc/$$/status files
+#if 1
 		sprintf(fname, "/proc/%s/statm", de->d_name);
 		e = readfile(fname, buf, sizeof(buf));
                 if (e > 0) {
+                    // line has: vmsz, rss, shrd, text, lib(unused), heap+stack, dirty(unused)
                     // size, resident, shared(file), text, lib, data+stack, dirty
-                    sscanf(buf, "%llu %llu %llu %llu %llu %llu %llu",
-                           nn+0, nn+1, nn+2, nn+3, nn+4, nn+5, nn+6);
+                    sscanf(buf, "%llu %llu %llu %llu", nn+0, nn+1, nn+2, nn+3);
+                    //sscanf(buf, "%llu %llu %llu %llu %llu %llu %llu",
+                    //       nn+0, nn+1, nn+2, nn+3, nn+4, nn+5, nn+6);
+// FIXME: this is a bogus "active" usage, because not all pages are active
                     if (is_active) {
                         _systat[1].counts.meminfo[0][0][0] += nn[1] * pgsz; /* rss */
                         _systat[1].counts.meminfo[0][1][0] += nn[0] * pgsz; /* vmsz */
@@ -1294,10 +1353,12 @@ int gather_stats(long loop_count)
                     }
                 }
                 /* else process may have disappered? */
+#endif
 #if 0
 		/* sum up memory use by all processes: */
+// FIXME: this is more useful than /proc/meminfo, because RSS is much less than tot-avail
 		sprintf(fname, "/proc/%s/status", de->d_name);
-		readfile(fname, buf, sizeof(buf));
+		if (readfile(fname, buf, sizeof(buf)) > 0) {
 		p = strstr(buf, "VmSize:");
 		if (p) _systat[1].counts.meminfo[1][1][0] += strtoul(p+7, NULL, 10);
 		p = strstr(buf, "VmRSS:");
@@ -1307,6 +1368,7 @@ int gather_stats(long loop_count)
 		// not strictly BSD, but shared libs are also shared
 		p = strstr(buf, "VmLib:");
 		if (p) _systat[1].counts.meminfo[1][1][1] += strtoul(p+6, NULL, 10);
+                }
 #endif
 	    }
 	}
@@ -1450,13 +1512,13 @@ int show_stats( )
     // printw("Tot %7s   Share   VM Tot    Share    Free", _systat[0].counts.sysinfo.memtotalkb);
     move(4,0);
     printw("Act %7s %7s  %7s  %7s %7s  Mem",
-	   showmem(6, _systat[0].counts.meminfo[0][0][0]),
+	   showmem(7, _systat[0].counts.meminfo[0][0][0]),
 	   showmem(6, _systat[0].counts.meminfo[0][0][1]),
 	   showmem(6, _systat[0].counts.meminfo[0][1][0]),
 	   showmem(6, _systat[0].counts.meminfo[0][1][1]),
 	   showmem(6, _systat[0].counts.memfree));
     move(5,0);
-    printw("All %7s %7s  %7s  %7s          in kb",
+    printw("Used%7s %7s  %7s  %7s          in kb",
 	   showmem(7, _systat[0].counts.meminfo[1][0][0]),
 	   showmem(7, _systat[0].counts.meminfo[1][0][1]),
 	   showmem(7, _systat[0].counts.meminfo[1][1][0]),
