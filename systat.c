@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.16.3"
+#define VERSION "v0.16.4"
 
 /**
 
@@ -1526,11 +1526,12 @@ int show_stats( )
 	   showmem(7, _systat[0].counts.meminfo[0][1][1]),
 	   " ");
     move(5,0);
-    printw("Used%7s %7s  %7s  %7s          in kb",
+    printw("Used%7s %7s  %7s  %7s %7s  in kb",
 	   showmem(7, _systat[0].counts.meminfo[1][0][0]),
 	   showmem(7, _systat[0].counts.meminfo[1][0][1]),
 	   showmem(7, _systat[0].counts.meminfo[1][1][0]),
-	   showmem(7, _systat[0].counts.meminfo[1][1][1]));
+	   showmem(7, _systat[0].counts.meminfo[1][1][1]),
+	   showmem(7, _systat[0].counts.memfree));
 
     /* process stats */
 // TODO: make per-proc counts optional, to not have to open files in every /proc/*/
