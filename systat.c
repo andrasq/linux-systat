@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.16.2"
+#define VERSION "v0.16.3"
 
 /**
 
@@ -858,7 +858,7 @@ int gather_stats(long loop_count)
                     strcmp(_intrnames[i], "ioat-msix") == 0 && (nchars = 9) ||
                     sscanf(_intrnames[i], "nvme%ldq%ld", &n, &m) == 2 && (nchars = 5) ||
                     sscanf(_intrnames[i], "megasas%ld-msix%ld", &n, &m) == 2 && (nchars = 7) ||
-                    sscanf(_intrnames[i], "mpt%ldsas%ld-msix", &n, &m) == 2 && (nchars = 8) || 
+                    sscanf(_intrnames[i], "mpt%ldsas%ld-msix", &n, &m) == 2 && (nchars = 8) ||
                     strncmp(_intrnames[i], "megasas", 8) == 0 ||
                     strncmp(_intrnames[i], "PCIe PME, pciehp", 16) == 0 ||
                     sscanf(_intrnames[i], "eno%ld-TxRx-%ld", &n, &m) == 2 && (nchars = 4) ||
@@ -908,12 +908,14 @@ int gather_stats(long loop_count)
         _systat[1].counts.memstats[3] = _systat[1].counts.procmeminfo.Active;
         _systat[1].counts.memstats[4] = _systat[1].counts.procmeminfo.Inactive;
         _systat[1].counts.memstats[6] = _systat[1].counts.procmeminfo.MemFree;
+        _systat[1].counts.memfree = _systat[1].counts.procmeminfo.MemFree;
 
         // ??? there is no MemShared
         //p = strstr(buf, "MemShared:");
         //if (p) sscanf(p+10, "%lu", &_systat[1].counts.meminfo[1][0][1]);
 
         // Shmem is documented as mem used for tmpfs, so not very useful
+        // meminfo(1,0,1) should be counting total shared virtual memory
         _systat[1].counts.meminfo[1][0][1] = _systat[1].counts.procmeminfo.Shmem;
 
         // maybe also count ShmemHugePages, ShmemPmdMapped
@@ -1250,11 +1252,12 @@ int gather_stats(long loop_count)
             double now;
 	    if (strchr("0123456789", de->d_name[0])) {
 		char fname[200];
-		ullong n, nn[10];
+		ullong n;
 		unsigned long pgsz = _pageKB;
                 double last_active;
                 int is_active = 0;
 
+#if 1
                 /* /proc/%d/sched contains "se.exec_start   :   12345678.012"
                  * which is updated with the last time the proc ran, in float milliseconds since boot.
                  * Use that info to distinguish "active" (ran in last 20 sec) from inactive */
@@ -1270,14 +1273,20 @@ int gather_stats(long loop_count)
                     is_active = last_active >= now - 20;
                 }
                 /* else if (e == 0) then file is empty, process might have exited? */
+#endif
 
 		n = 0;
-		memset(nn, 0, sizeof(nn));
 
 		/* sum up txt,dta/stk?,lib using getpagesize() */
 		sprintf(fname, "/proc/%s/stat", de->d_name);
 		e = readfile(fname, buf, sizeof(buf));
 		if (e <= 0) continue;
+
+// NOTE: a quick estimate of RSS is Active+Inactive - Cached (.9958 GiB 10% off; seems to include kernel slab?)
+// NOTE: total memory is approx active + inactive + cached + buffers + shmem + free (3% off)
+// NOTE: DirectMap{4k,2M,1G} + RSS is about how much total virtual memory is used (1% off)
+// NOTE: `top` shows Used = MemTotal - MemAvailable (which can be close to RSS, but not always)
+// nb: top does not restore the screen, it overwrites and leaves its lines 
 
 		/* pid=1, minflt=10, majflt=12, priority=18, nice=19,
 		 * vsize=23, rss=24, nswap=36 (not maintained)
@@ -1331,22 +1340,21 @@ int gather_stats(long loop_count)
 		sprintf(fname, "/proc/%s/statm", de->d_name);
 		e = readfile(fname, buf, sizeof(buf));
                 if (e > 0) {
+                    ullong vmsz, rss, shrd, text;
                     // line has: vmsz, rss, shrd, text, lib(unused), heap+stack, dirty(unused)
                     // size, resident, shared(file), text, lib, data+stack, dirty
-                    sscanf(buf, "%llu %llu %llu %llu", nn+0, nn+1, nn+2, nn+3);
-                    //sscanf(buf, "%llu %llu %llu %llu %llu %llu %llu",
-                    //       nn+0, nn+1, nn+2, nn+3, nn+4, nn+5, nn+6);
+                    sscanf(buf, "%llu %llu %llu %llu", &vmsz, &rss, &shrd, &text);
 // FIXME: this is a bogus "active" usage, because not all pages are active
                     if (is_active) {
-                        _systat[1].counts.meminfo[0][0][0] += nn[1] * pgsz; /* rss */
-                        _systat[1].counts.meminfo[0][1][0] += nn[0] * pgsz; /* vmsz */
-                        _systat[1].counts.meminfo[0][1][1] += nn[2] * pgsz; /* shrd, ie backed by a file */
+                        _systat[1].counts.meminfo[0][0][0] += rss * pgsz; /* rss */
+                        _systat[1].counts.meminfo[0][1][0] += vmsz * pgsz; /* vmsz */
+                        _systat[1].counts.meminfo[0][1][1] += shrd * pgsz; /* shrd, ie backed by a file */
                     }
-                    _systat[1].counts.meminfo[1][0][0] += nn[1] * pgsz; /* rss */
-                    _systat[1].counts.meminfo[1][1][0] += nn[0] * pgsz; /* vmsz */
-                    _systat[1].counts.meminfo[1][1][1] += nn[2] * pgsz; /* shrd */
+                    _systat[1].counts.meminfo[1][0][0] += rss * pgsz; /* rss */
+                    _systat[1].counts.meminfo[1][1][0] += vmsz * pgsz; /* vmsz */
+                    _systat[1].counts.meminfo[1][1][1] += shrd * pgsz; /* shrd */
                     // kernel processes read "0 0 0 0 0 0 0"
-                    if (nn[1] == 0 && nn[0] > 0) {
+                    if (rss == 0 && vmsz > 0) {
                         /* rss = 0 but vmsz > 0: process is swapped out */
                         _systat[1].counts.procs[3] -= 1;	/* -S sleeping */
                         _systat[1].counts.procs[4] += 1;	/* +W swapped out */
@@ -1486,7 +1494,7 @@ int show_stats( )
 
     mvprintw(0, 0, VERSION);
     mvprintw(0, 12, "%d users", _systat[0].counts.nusers);
-    putline(0, 23, PAGER_COL+3, "Load %5.2f %5.2f %5.2f, up %s   ",
+    putline(0, 22, PAGER_COL+3, "Load %5.2f %5.2f %5.2f   Up %s   ",
 	   _systat[0].counts.loadavg[0],
 	   _systat[0].counts.loadavg[1],
 	   _systat[0].counts.loadavg[2],
@@ -1515,8 +1523,8 @@ int show_stats( )
 	   showmem(7, _systat[0].counts.meminfo[0][0][0]),
 	   showmem(6, _systat[0].counts.meminfo[0][0][1]),
 	   showmem(6, _systat[0].counts.meminfo[0][1][0]),
-	   showmem(6, _systat[0].counts.meminfo[0][1][1]),
-	   showmem(6, _systat[0].counts.memfree));
+	   showmem(7, _systat[0].counts.meminfo[0][1][1]),
+	   " ");
     move(5,0);
     printw("Used%7s %7s  %7s  %7s          in kb",
 	   showmem(7, _systat[0].counts.meminfo[1][0][0]),
@@ -1525,6 +1533,7 @@ int show_stats( )
 	   showmem(7, _systat[0].counts.meminfo[1][1][1]));
 
     /* process stats */
+// TODO: make per-proc counts optional, to not have to open files in every /proc/*/
     // was: mvprintw(7, 0, "Proc:r  p  d  s  w   Csw  Trp   Sys  Int  Sof  Flt");
     //   = running, page wait, disk wait, sleeping, swapped out but wants to run [page wait not tracked by linux]
     //   = Context switches, Traps, System calls, Interrupts, net software Interrupts, page Faults
