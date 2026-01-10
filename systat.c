@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.16.4"
+#define VERSION "v0.17.0"
 
 /**
 
@@ -37,16 +37,17 @@ AR: 0.9.0 todo changes:
 + combine eth%d-rx-%d and eth%d-tx-%d interrupts (2 each)
 + combine xhci_hcd interrupts (2 identically named)
 2025-01-11
-- fix occasional crash
++ fix occasional crash
   (gdb) where
   #0  0x00007ffff7e114a7 in ?? () from /lib/x86_64-linux-gnu/libc.so.6
   #1  0x0000000000401aea in scan_ullong ()
   #2  0x00000000004035e0 in gather_stats ()
   #3  0x00000000004017e9 in main ()
+  A: processes could disappear after directory scan but before reading their stats
 + maybe support ' ' spacebar to refresh immediately (and correctly scale the time period denominator)
 + very first set of stats are divided by the sampling interval, should show them as absolute
 - if window is small, network devices overwrite top disks rows
-- cpu usage missing? eg 80% busy, but only 550% of 1200% accounted for: (%q always zero??)
++ cpu usage missing? eg 80% busy, but only 550% of 1200% accounted for: (%q always zero??)
               Cpus 2p/12c/12t  2.629 GHz
    130.4%s   0.0%q 404.6%u  17.7%n  19.7%i   5.9%w   0.0%t        862 react      16: ehci_hcd:usb1
   |     |     |     |     |     |     |     |     |     |     |       pdwak      23: ehci_hcd:usb2
@@ -499,6 +500,8 @@ char * _showit( int fieldwidth, int frac, ullong val, char *units, ullong bases[
     static char bufs[16][100] = { 0 };
     static int bufid = 0;
 
+    if (fieldwidth > 99) return "**";
+
     /* rotate through 16 buffers to allow multiple _showit() in a single printw */
     char *p;
     ullong *b;
@@ -551,7 +554,7 @@ char * showmem( int fieldwidth, ullong val )
     const ullong K = 1024, M = K*K, G = M*K, T = G*K, P = T*K, E = P*K;
     ullong bases[] = { 1, K, M, G, T, P, E };
     // FIXME: Z, Y not representable in 64 bits
-    return _showit(fieldwidth, 2, val, "KMGTPE", bases);
+    return _showit(fieldwidth, 1, val, "KMGTPE", bases);
 }
 
 /* typeset a float to fit the field width, scale by powers of 1000 */
@@ -769,7 +772,8 @@ int gather_stats(long loop_count)
            &_systat[1].counts.nlastpid);
 
     if (readfile("/proc/cpuinfo", buf, sizeof(buf)) > 0) {
-        int ncpus = 0, ncores = 0, nthreads = 0, nmhz = 0, totmhz = 0, maxmhz = 0, vcores = 0;
+        int ncpus = 0, ncores = 0, nthreads = 0, nmhz = 0, vcores = 0;
+        double totmhz = 0, maxmhz = 0;
         // see /sys/devices/system/cpu/cpu*/topology/thread_siblings_list for pairings 0,8 1,9 etc
         // to disable at runtime: echo 0 > /sys/devices/system/cpu/cpu9/online
         // to disable at boottime: append `noht` kernel flag
@@ -1257,7 +1261,7 @@ int gather_stats(long loop_count)
                 double last_active;
                 int is_active = 0;
 
-#if 1
+#if 0
                 /* /proc/%d/sched contains "se.exec_start   :   12345678.012"
                  * which is updated with the last time the proc ran, in float milliseconds since boot.
                  * Use that info to distinguish "active" (ran in last 20 sec) from inactive */
@@ -1505,18 +1509,44 @@ int show_stats( )
     // lscpu enumerates them as sockets, numa nodes, cores (per socket), cpus (threads per core)
     // note that maxcpu is distorted by sytat itself, it spikes the clock when running
     r = DISKS_ROW - 1;
-    mvprintw(1, 12, "Cpus %lup/%luc/%lut  %5.3f GHz (max %5.3f)",
+    mvprintw(1, 12, "Cpus %lup/%luc/%lut  %4.f MHz (max %4.f)",
         _systat[0].counts.sysinfo.ncpus,
         _systat[0].counts.sysinfo.ncores,
         _systat[0].counts.sysinfo.nthreads,
-        _systat[0].counts.sysinfo.avgmhz / 1000,
-        _systat[0].counts.sysinfo.maxmhz / 1000);
+        _systat[0].counts.sysinfo.avgmhz,
+        _systat[0].counts.sysinfo.maxmhz);
 
     mvprintw(0, PAGER_COL+5, "%.19s.%03d", ctime(&_systat[0].counts.date), _systat[0].counts.ms);
     mvprintw(1, PAGER_COL+5+2, "[%s]", _hostname);
 
     move(3,0);
-    printw("Mem %7s   Share   VM Tot    Share    Free", showmem(7, _systat[0].counts.sysinfo.memtotalkb));
+if (1) {
+    /*
+    mem - total physical memory
+    used - memory not available to programs
+    cache - memory used to caching files and as buffers
+    free - memory on the free list
+    avail - kernel estimate of how much memory is usable before has to page out
+    swap - total swap space
+    swapo - swapped out memory, used swap space
+    */
+    mvprintw(3, 0, "    vm:   rss %5s  vmsz %5s  shrd %5s",
+        showmem(5, _systat[1].counts.meminfo[1][0][0]),
+        showmem(5, _systat[1].counts.meminfo[1][1][0]),
+        showmem(5, _systat[1].counts.meminfo[1][1][1])
+    );
+    mvprintw(4, 0, "   mem   used  cache   free  avail   swap  swapo");
+    mvprintw(5, 0, "%6s %6s %6s %6s %6s %6s",
+        showmem(5, _systat[0].counts.sysinfo.memtotalkb),
+        showmem(5, _systat[0].counts.procmeminfo.MemTotal - _systat[0].counts.procmeminfo.MemAvailable),
+        showmem(5, _systat[0].counts.procmeminfo.Cached + _systat[0].counts.procmeminfo.Buffers),
+        showmem(5, _systat[0].counts.procmeminfo.MemFree),
+        showmem(5, _systat[0].counts.procmeminfo.MemAvailable),
+        showmem(5, _systat[0].counts.procmeminfo.SwapTotal),
+        showmem(5, _systat[0].counts.procmeminfo.SwapTotal - _systat[0].counts.procmeminfo.SwapFree)
+    );
+} else {
+    printw("Mem %7s   Share     VTot   VShare    Free", showmem(7, _systat[0].counts.sysinfo.memtotalkb));
     // printw("Tot %7s   Share   VM Tot    Share    Free", _systat[0].counts.sysinfo.memtotalkb);
     move(4,0);
     printw("Act %7s %7s  %7s  %7s %7s  Mem",
@@ -1532,6 +1562,7 @@ int show_stats( )
 	   showmem(7, _systat[0].counts.meminfo[1][1][0]),
 	   showmem(7, _systat[0].counts.meminfo[1][1][1]),
 	   showmem(7, _systat[0].counts.memfree));
+}
 
     /* process stats */
 // TODO: make per-proc counts optional, to not have to open files in every /proc/*/
