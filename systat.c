@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.17.1"
+#define VERSION "v0.17.2"
 
 /**
 
@@ -358,7 +358,15 @@ struct system_stats_s {
 	ullong        totintr;		/* total interrupts since boot */
 	ullong        intr[200];	/* interrupts from irq 0 .. 15 */
 	unsigned long vm[6];		/* vss rss data stk exe lib */
-	unsigned long procs[5];		/* r p d s w */
+        struct {			/* r p d s w */
+            ulong running;
+            // p is page wait, not tracked by linux
+            ulong diskwait;
+            ulong sleeping;
+            ulong swapped;
+            ulong zombie;
+            ulong stopped;
+        } procstat;
         /* network activity */
 	unsigned long long net[lengthof(_netname)*4];   /* eth0 and ppp0 rx/tx byt/pkt */
         /* disk activity */
@@ -1268,6 +1276,7 @@ int gather_stats(long loop_count)
 		unsigned long pgsz = _pageKB;
                 double last_active;
                 int is_active = 0;
+                int is_swapped = 0;
 
 #if 0
                 /* /proc/%d/sched contains "se.exec_start   :   12345678.012"
@@ -1286,6 +1295,35 @@ int gather_stats(long loop_count)
                 }
                 /* else if (e == 0) then file is empty, process might have exited? */
 #endif
+
+                // count up VmRSS from the per-process /proc/$$/status files
+                // statm is a tiny little file, it measures in pages, but its contents are not accurate
+		sprintf(fname, "/proc/%s/statm", de->d_name);
+		e = readfile(fname, buf, sizeof(buf));
+                if (e > 0) {
+                    ullong vmsz, rss, shrd, text, zero, data;
+                    // line has: vmsz, rss, shrd, text, lib(unused), heap+stack, dirty(unused)
+                    // size, resident, shared(file), text, 0(lib), data+stack, 0(dirty)
+                    sscanf(buf, "%llu %llu %llu %llu %llu %llu", &vmsz, &rss, &shrd, &text, &zero, &data);
+                    if (is_active) {
+                        // TODO: is_active is no longer gathered
+                        _systat[1].counts.meminfo[0][0][0] += rss * pgsz; /* rss */
+                        _systat[1].counts.meminfo[0][1][0] += vmsz * pgsz; /* vmsz */
+                        _systat[1].counts.meminfo[0][1][1] += shrd * pgsz; /* shrd, ie backed by a file */
+                        // text is read-only code pagse
+                        // data is writable heap + stack pages
+                    }
+                    _systat[1].counts.meminfo[1][0][0] += rss * pgsz; /* rss */
+                    _systat[1].counts.meminfo[1][1][0] += vmsz * pgsz; /* vmsz */
+                    _systat[1].counts.meminfo[1][1][1] += shrd * pgsz; /* shrd */
+                    // kernel processes read "0 0 0 0 0 0 0"
+                    if (rss == 0 && vmsz > 0) {
+                        /* rss = 0 but vmsz > 0: process is swapped out */
+                        _systat[1].counts.procstat.swapped += 1;	/* +W swapped out */
+                        is_swapped = 1;
+                    }
+                }
+                /* else process may have disappered? */
 
 		n = 0;
 
@@ -1311,26 +1349,36 @@ int gather_stats(long loop_count)
 		/* skip to the third word in the status line, RSDZT status */
 		for (i=0; i<3; i++)
 		    p = strsep(&s, " \t");
-                switch (*p) {
+                /* FIXME: the line is "<pid> (<proc name>) <status>"
+                   Because the proc name can contain anything except NUL the third word
+                   may still be part of the command name, even a ')' might be. */
+                // TODO: Note that /proc/*/stat also contains minfault, majfault, vsize, rss
+
+                if (!is_swapped) switch (*p) {
                 // FIXME: /proc/*/status shows better IRST status?
-		case 'R':
-		    /* currently running */
-		    _systat[1].counts.procs[0] += 1;    // r running
+                // ...but is a much bigger file to scan
+		case 'R':  // R running
+                    // we read the running procs count from /proc/stat around line 1125
+		    // _systat[1].counts.procstat.running += 1; // r running
                     break;;;
-		case 'S':
-		    /* sleeping interruptible */
-		    _systat[1].counts.procs[3] += 1;    // s sleeping
+                case 'I':  // I idle (lx 4.14 and up)
+		case 'S':  // S sleeping in interruptible wait
+		    _systat[1].counts.procstat.sleeping += 1;   // s sleeping
                     break;
-		case 'D':
-		    /* sleeping uninterruptabe */
-		    _systat[1].counts.procs[2] += 1;    // d iowait (disk wait)
+		case 'D': // D uninterruptable disk wait (eg nfs?)
+		    _systat[1].counts.procstat.diskwait += 1;   // d iowait (disk wait)
                     break;
-		case 'T':
-                case 't':
-		    /* traced or stopped on signal */
-		    _systat[1].counts.procs[3] += 1;    // d stopped (but not iowait)
+		case 'T':  // T stopped on signal
+                case 't':  // t tracing stop
+                    _systat[1].counts.procstat.stopped += 1;	// d stopped (but not iowait)
                     break;
-                // note: "// p page wait" is not tracked separately by linux
+                case 'Z':  // Z zombie
+                case 'X':  // X dead
+                default:
+                    _systat[1].counts.procstat.sleeping += 1;
+                    break;
+                // p page wait is not tracked separately by linux
+                // w swapped out is not tracked by linux, shows up as non-zero vmsz with zero rss
                 }
 
 		/* skip to the 10th word, minflt */
@@ -1346,34 +1394,6 @@ int gather_stats(long loop_count)
 			p = strsep(&s, " \t");
 		}
 
-// FIXME: just use the kernel aggregate Active/Inactive, do not try to duplicate BSD semantics
-// FIXME: count up VmRSS from the per-process /proc/$$/status files
-#if 1
-		sprintf(fname, "/proc/%s/statm", de->d_name);
-		e = readfile(fname, buf, sizeof(buf));
-                if (e > 0) {
-                    ullong vmsz, rss, shrd, text;
-                    // line has: vmsz, rss, shrd, text, lib(unused), heap+stack, dirty(unused)
-                    // size, resident, shared(file), text, lib, data+stack, dirty
-                    sscanf(buf, "%llu %llu %llu %llu", &vmsz, &rss, &shrd, &text);
-// FIXME: this is a bogus "active" usage, because not all pages are active
-                    if (is_active) {
-                        _systat[1].counts.meminfo[0][0][0] += rss * pgsz; /* rss */
-                        _systat[1].counts.meminfo[0][1][0] += vmsz * pgsz; /* vmsz */
-                        _systat[1].counts.meminfo[0][1][1] += shrd * pgsz; /* shrd, ie backed by a file */
-                    }
-                    _systat[1].counts.meminfo[1][0][0] += rss * pgsz; /* rss */
-                    _systat[1].counts.meminfo[1][1][0] += vmsz * pgsz; /* vmsz */
-                    _systat[1].counts.meminfo[1][1][1] += shrd * pgsz; /* shrd */
-                    // kernel processes read "0 0 0 0 0 0 0"
-                    if (rss == 0 && vmsz > 0) {
-                        /* rss = 0 but vmsz > 0: process is swapped out */
-                        _systat[1].counts.procs[3] -= 1;	/* -S sleeping */
-                        _systat[1].counts.procs[4] += 1;	/* +W swapped out */
-                    }
-                }
-                /* else process may have disappered? */
-#endif
 #if 0
 		/* sum up memory use by all processes: */
 // FIXME: this is more useful than /proc/meminfo, because RSS is much less than tot-avail
@@ -1574,26 +1594,32 @@ if (1) {
 
     /* process stats */
 // TODO: make per-proc counts optional, to not have to open files in every /proc/*/
+// note: Sof was network software interrupts, but we use it for for minor page faults
     // was: mvprintw(7, 0, "Proc:r  p  d  s  w   Csw  Trp   Sys  Int  Sof  Flt");
     //   = running, page wait, disk wait, sleeping, swapped out but wants to run [page wait not tracked by linux]
     //   = Context switches, Traps, System calls, Interrupts, net software Interrupts, page Faults
-    mvprintw(7, 0, "Proc:r   p   d   s   w  Csw  Trp  Int  Sof  Flt");
-    mvprintw(8, 2, "%s", shownum(4, _systat[0].counts.procs[0] - 1));   // do not count ourselves as a running process
-    // mvprintw(8, 6, "%s", shownum(4, _systat[0].counts.procs[1]));
+    // Note that linux does not track p page wait.
+    mvprintw(7, 0, "Proc:r   p   d   s   w  Csw  Trp  Int Minf Majf");
+    mvprintw(8, 2, "%s", shownum(4, _systat[0].counts.procstat.running - 1));   // r running processes (but not us)
+    // mvprintw(8, 6, "%s", shownum(4, _systat[0].counts.procstat.pagewait));
     // time spent in i/o wait (ie "page wait") normalized to number of threads (ie vcpus)
-    mvprintw(8, 6, "%s", shownum(4, _systat[0].deltas.syspct[5] / 100.0 * _systat[0].counts.sysinfo.nthreads + 0.5));
-    mvprintw(8, 10, "%s", shownum(4, _systat[0].counts.procs[2]));
-    mvprintw(8, 14, "%s", shownum(4, _systat[0].counts.procs[3]));
-    mvprintw(8, 18, "%s", shownum(4, _systat[0].counts.procs[4]));
-    mvprintw(8, 22, "%5s", shownum(4, _systat[0].deltas.ctxt[0]));
+    mvprintw(8, 6, "%s", shownum(4, _systat[0].deltas.syspct[5]			// p computed "page wait"
+        / 100.0 * _systat[0].counts.sysinfo.nthreads + 0.5));
+// FIXME: wrong, cannot normalize to num threads, 4% of time over 400 threads is .0001, always rounds to zero
+    mvprintw(8, 10, "%s", shownum(4, _systat[0].counts.procstat.diskwait));	// d
+    mvprintw(8, 14, "%s", shownum(4, _systat[0].counts.procstat.sleeping	// s
+        + _systat[0].counts.procstat.stopped
+        + _systat[0].counts.procstat.zombie));
+    mvprintw(8, 18, "%s", shownum(4, _systat[0].counts.procstat.swapped));	// w
+    mvprintw(8, 22, "%5s", shownum(4, _systat[0].deltas.ctxt[0]));		// Csw
     mvprintw(8, 28, "%s", shownum(4, 0));	// traps, overwritten with New
     //mvprintw(8, 30, "%s", shownum(5, 0));	// syscalls, omit (not tracked)
-    mvprintw(8, 33, "%s", shownum(4, _systat[0].deltas.totintr));
-    mvprintw(8, 38, "%s", shownum(4, _systat[0].deltas.faults[0]));
-    mvprintw(8, 43, "%s", shownum(4, _systat[0].deltas.faults[1]));
+    mvprintw(8, 33, "%s", shownum(4, _systat[0].deltas.totintr));		// Int
+    mvprintw(8, 38, "%s", shownum(4, _systat[0].deltas.faults[0]));		// Minf
+    mvprintw(8, 43, "%s", shownum(4, _systat[0].deltas.faults[1]));		// Majf
     // overwrite Trp with New
     mvprintw(7, 29, "New");
-    mvprintw(8, 28, "%s", shownum(4, _systat[0].deltas.newprocs));
+    mvprintw(8, 28, "%s", shownum(4, _systat[0].deltas.newprocs));		// New processes created
 
     r = 6;  // mem stats row
     mvprintw(r++, PAGER_COL, "%s cow", shownum(7, _systat[0].counts.memstats[0]));
