@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.17.4"
+#define VERSION "v0.17.5"
 
 /**
 
@@ -261,10 +261,16 @@ long _hz;                       /* sysconf(_SC_CLK_TCK), aka USER_HZ, typically 
 
 static WINDOW *_win;		/* initialized by main */
 
-static char _intrnames[100][40];
-static char _intrnums[100][40];
-static char _disknames[16][16];
-static char _netname[16][40];
+#define NJIFFIES        10
+#define NMEMSTATS       14
+#define NINTR           100
+#define NDISKS          16
+#define NNET            16
+
+static char _intrnames[NINTR][40];
+static char _intrnums[NINTR][40];
+static char _disknames[NDISKS][16];
+static char _netname[NNET][40];
 static char _nnet = 0;
 
 #define lengthof( arr )         ( sizeof(arr) / sizeof(*(arr)) )
@@ -339,8 +345,7 @@ struct system_stats_s {
 
 // TODO: make meminfo two flat arrays of 4
     ullong          meminfo[2][2][2];
-    ullong          memfree;
-    ullong          memstats[14];
+    ullong          memstats[NMEMSTATS];
 
     /* system hardware */
     struct {
@@ -353,13 +358,13 @@ struct system_stats_s {
     } sysinfo;
 
     /* cpu usage */
-    ullong cpujiffies[10];		/* sys, intr, user, user-nice, idle, iowait, irq, softirq, steal, guest, guest-nice */
-    unsigned long pager[2];		/* in, out */
+    ullong cpujiffies[NJIFFIES];/* sys, intr, user, user-nice, idle, iowait, irq, softirq, steal, guest, guest-nice */
+    unsigned long pager[2];	/* in, out */
     unsigned long swapper[2];	/* in, out */
     unsigned long faults[2];	/* Linux: minflt majflt */
-    unsigned long ctxt[2];		/* csw, trp */
-    ullong        totintr;		/* total interrupts since boot */
-    ullong        intr[200];	/* interrupts from irq 0 .. 15 */
+    unsigned long ctxt[2];	/* csw, trp */
+    ullong        totintr;	/* total interrupts since boot */
+    ullong        intr[NINTR];	/* interrupts from irq 0 .. 15 */
     struct {			/* r p d s w */
         ulong running;
         // p is page wait, not tracked by linux
@@ -371,10 +376,10 @@ struct system_stats_s {
     } procstat;
 
     /* network activity */
-    unsigned long long net[lengthof(_netname)*4];   /* eth0 and ppp0 rx/tx byt/pkt */
+    unsigned long long net[NNET*4];   /* eth0 and ppp0 etc, 4 fields: rx/tx byt/pkt */
 
     /* disk activity */
-    ullong        diskinfo[16][6];	/* seeks, xfers, blks, msps, rblk, wblk */
+    ullong        diskinfo[NDISKS][6];	/* seeks, xfers, blks, msps, rblk, wblk */
 
 // TODO: rename _systat[0].counts to _nprevious, _systat[1] to _ncurrent
 // TODO: make counts[0], counts[1] and deltas each be the same struct
@@ -385,20 +390,20 @@ struct system_stats_s {
 struct system_stats_s _systat[2];
 
 struct deltas_s {
-    ullong cpujiffies[10];  /* >= 2.6.33: usr,nice,sys,idle,iow,irq,softirq,steal,guest,guestnice */
-    double corepct[10];     // %cpu scaled to 1 core
-    double syspct[10];      // %cpu scaled to total system cores
-    double cpuuse[10];
+    ullong cpujiffies[NJIFFIES];  /* >= 2.6.33: usr,nice,sys,idle,iow,irq,softirq,steal,guest,guestnice */
+    double corepct[NJIFFIES];     // %cpu scaled to 1 core
+    double syspct[NJIFFIES];      // %cpu scaled to total system cores
+    double cpuuse[NJIFFIES];
     ullong newprocs;
     ullong pager[2];
     ullong swapper[2];
     ullong faults[2];
     ullong ctxt[2];
     ullong totintr;
-    ullong intr[200];
-    ullong net[lengthof(_netname)*4];
-    ullong diskinfo[16][6];
-    ullong memstats[14];
+    ullong intr[NINTR];
+    ullong net[NNET*4];
+    ullong diskinfo[NDISKS][6];
+    ullong memstats[NMEMSTATS];
 } _deltas;
 
 
@@ -930,7 +935,6 @@ int gather_stats(long loop_count)
         _systat[1].memstats[3] = _systat[1].procmeminfo.Active;
         _systat[1].memstats[4] = _systat[1].procmeminfo.Inactive;
         _systat[1].memstats[6] = _systat[1].procmeminfo.MemFree;
-        _systat[1].memfree = _systat[1].procmeminfo.MemFree;
 
         // ??? there is no MemShared
         //p = strstr(buf, "MemShared:");
@@ -1591,7 +1595,7 @@ if (1) {
 	   showmem(7, _systat[0].meminfo[1][0][1]),
 	   showmem(7, _systat[0].meminfo[1][1][0]),
 	   showmem(7, _systat[0].meminfo[1][1][1]),
-	   showmem(7, _systat[0].memfree));
+	   showmem(7, _systat[0].procmeminfo.MemFree));
 }
 
     /* process stats */
