@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.17.3"
+#define VERSION "v0.17.4"
 
 /**
 
@@ -309,71 +309,74 @@ void on_sigterm( )
 }
 
 struct system_stats_s {
-    struct {
-	/* top line */
-	int		nusers;
-	int		nrunprocs, ntotalprocs, nlastpid;
-	ullong		ncreatedprocs;
-	float		loadavg[3];
-	float		temps[3];
-	time_t		date;
-        int             ms;
-	/* memory */
-        struct {
-            // these fields are in the same order as in the file
-            llong       MemTotal;
-            llong       MemFree;
-            llong       MemAvailable;
-            llong       Buffers;
-            llong       Cached;
-            llong       SwapCached;
-            llong       Active;
-            llong       Inactive;
-            llong       Unevictable;
-            llong       SwapTotal;
-            llong       SwapFree;
-            llong       Dirty;
-            llong       Mapped;
-            llong       Shmem;          // mem used by tmpfs filesystems
-        } procmeminfo;
-// TODO: make meminfo two flat arrays of 4
-	ullong          meminfo[2][2][2];
-	ullong          memfree;
-	ullong          memstats[14];
-        /* system hardware */
-        struct {
-            ulong ncpus;
-            ulong ncores;
-            ulong nthreads;
-            ulong memtotalkb;
-            double maxmhz;
-            double avgmhz;
-        } sysinfo;
-	/* cpu usage */
-	ullong cpujiffies[10];		/* sys, intr, user, user-nice, idle, iowait, irq, softirq, steal, guest, guest-nice */
-	unsigned long pager[2];		/* in, out */
-	unsigned long swapper[2];	/* in, out */
-	unsigned long faults[2];	/* Linux: minflt majflt */
-	unsigned long ctxt[2];		/* csw, trp */
-	ullong        totintr;		/* total interrupts since boot */
-	ullong        intr[200];	/* interrupts from irq 0 .. 15 */
-        struct {			/* r p d s w */
-            ulong running;
-            // p is page wait, not tracked by linux
-            ulong diskwait;
-            ulong sleeping;
-            ulong swapped;
-            ulong zombie;
-            ulong stopped;
-        } procstat;
-        /* network activity */
-	unsigned long long net[lengthof(_netname)*4];   /* eth0 and ppp0 rx/tx byt/pkt */
-        /* disk activity */
-	ullong        diskinfo[16][6];	/* seeks, xfers, blks, msps, rblk, wblk */
-    }
-    counts;
+    /* top line */
+    int		nusers;
+    int		nrunprocs, ntotalprocs, nlastpid;
+    ullong	ncreatedprocs;
+    float	loadavg[3];
+    float	temps[3];
+    time_t	date;
+    int		ms;
 
-// TODO: rename _systat[0].counts to _nprevious, _systat[1].counts to _ncurrent
+    /* memory */
+    struct {
+        // these fields are in the same order as in the file
+        llong       MemTotal;
+        llong       MemFree;
+        llong       MemAvailable;
+        llong       Buffers;
+        llong       Cached;
+        llong       SwapCached;
+        llong       Active;
+        llong       Inactive;
+        llong       Unevictable;
+        llong       SwapTotal;
+        llong       SwapFree;
+        llong       Dirty;
+        llong       Mapped;
+        llong       Shmem;          // mem used by tmpfs filesystems
+    } procmeminfo;
+
+// TODO: make meminfo two flat arrays of 4
+    ullong          meminfo[2][2][2];
+    ullong          memfree;
+    ullong          memstats[14];
+
+    /* system hardware */
+    struct {
+        ulong ncpus;
+        ulong ncores;
+        ulong nthreads;
+        ulong memtotalkb;
+        double maxmhz;
+        double avgmhz;
+    } sysinfo;
+
+    /* cpu usage */
+    ullong cpujiffies[10];		/* sys, intr, user, user-nice, idle, iowait, irq, softirq, steal, guest, guest-nice */
+    unsigned long pager[2];		/* in, out */
+    unsigned long swapper[2];	/* in, out */
+    unsigned long faults[2];	/* Linux: minflt majflt */
+    unsigned long ctxt[2];		/* csw, trp */
+    ullong        totintr;		/* total interrupts since boot */
+    ullong        intr[200];	/* interrupts from irq 0 .. 15 */
+    struct {			/* r p d s w */
+        ulong running;
+        // p is page wait, not tracked by linux
+        ulong diskwait;
+        ulong sleeping;
+        ulong swapped;
+        ulong zombie;
+        ulong stopped;
+    } procstat;
+
+    /* network activity */
+    unsigned long long net[lengthof(_netname)*4];   /* eth0 and ppp0 rx/tx byt/pkt */
+
+    /* disk activity */
+    ullong        diskinfo[16][6];	/* seeks, xfers, blks, msps, rblk, wblk */
+
+// TODO: rename _systat[0].counts to _nprevious, _systat[1] to _ncurrent
 // TODO: make counts[0], counts[1] and deltas each be the same struct
 // FIXME: to guarantee that array sizes remain in sync
 // TODO: read stats into _systat[1] by symbolic name eg VMSTAT_PGPGIN,
@@ -769,8 +772,8 @@ int gather_stats(long loop_count)
     memset(&_systat[1], 0, sizeof(_systat[1]));
     memset(&_deltas, 0, sizeof(_deltas));
 
-    _systat[1].counts.date = (time_t) now;
-    _systat[1].counts.ms = 1000 * (now - (ullong)now);
+    _systat[1].date = (time_t) now;
+    _systat[1].ms = 1000 * (now - (ullong)now);
 
     /* syscmdl(NULL, NULL, buf, sizeof(buf),
 	       "sensors | grep CPU | grep Temp:"); */
@@ -779,12 +782,12 @@ int gather_stats(long loop_count)
     // 1m 5m 15m load average, running/total threads, last pid
     readfile("/proc/loadavg", buf, sizeof(buf));
     sscanf(buf, "%f %f %f %d/%d %d",
-	   &_systat[1].counts.loadavg[0],
-	   &_systat[1].counts.loadavg[1],
-	   &_systat[1].counts.loadavg[2],
-	   &_systat[1].counts.nrunprocs,
-	   &_systat[1].counts.ntotalprocs,
-           &_systat[1].counts.nlastpid);
+	   &_systat[1].loadavg[0],
+	   &_systat[1].loadavg[1],
+	   &_systat[1].loadavg[2],
+	   &_systat[1].nrunprocs,
+	   &_systat[1].ntotalprocs,
+           &_systat[1].nlastpid);
 
     if (readfile("/proc/cpuinfo", buf, sizeof(buf)) > 0) {
         int ncpus = 0, ncores = 0, nthreads = 0, nmhz = 0, vcores = 0;
@@ -826,17 +829,17 @@ int gather_stats(long loop_count)
 
         // Cores count does not reflect cores added to a VM while running.
         // MHz count in a VM seems to show all physical cores not just virtual.
-        _systat[1].counts.sysinfo.ncpus = ncpus;
+        _systat[1].sysinfo.ncpus = ncpus;
         // NOTE: we assume all cpus have the same number of cores
-        _systat[1].counts.sysinfo.ncores = ncpus * ncores;
-        _systat[1].counts.sysinfo.nthreads = nthreads;
-        _systat[1].counts.sysinfo.maxmhz = maxmhz;
-        _systat[1].counts.sysinfo.avgmhz = (double)totmhz / nthreads;
+        _systat[1].sysinfo.ncores = ncpus * ncores;
+        _systat[1].sysinfo.nthreads = nthreads;
+        _systat[1].sysinfo.maxmhz = maxmhz;
+        _systat[1].sysinfo.avgmhz = (double)totmhz / nthreads;
     }
 
     /* NOTE: /proc/interrupts can grow huge; 40k for 24 cores, but can have 100+ cores */
     readfile("/proc/interrupts", buf, sizeof(buf));
-    _systat[1].counts.totintr = 0;
+    _systat[1].totintr = 0;
     nextp = buf;
     p = strsep(&nextp, "\n");
     for (i=0; i<lengthof(_intrnames); i++) {
@@ -866,7 +869,7 @@ int gather_stats(long loop_count)
                 while (*p >= '0' && *p <= '9') p++;
             }
 
-            _systat[1].counts.intr[i] = count;
+            _systat[1].intr[i] = count;
 
             /* collapse many-valued interrupts, eg 8 nvme0q0, q1, q2, ... */
             if (i > 0) {
@@ -889,14 +892,14 @@ int gather_stats(long loop_count)
                     if (count > 0) {
                         snprintf(tmpbuf, sizeof(tmpbuf), "%s%s", _intrnums[i-1], num);
                         snprintf(_intrnums[i-1], sizeof(*_intrnums), "%s", tmpbuf);
-                        _systat[1].counts.intr[i-1] += count;
+                        _systat[1].intr[i-1] += count;
                     }
                     i--;
                 }
             }
         }
 	// compute totintr from the partials, the count in /proc/stat is no longer reliable
-	_systat[1].counts.totintr += _systat[1].counts.intr[i];
+	_systat[1].totintr += _systat[1].intr[i];
     }
 
     /* Mem: usage */
@@ -904,38 +907,38 @@ int gather_stats(long loop_count)
         // better to / more useful to track: total, rss, swap, free, buffer/cache (ie also free)
 
         p = buf;
-        p = readllong(p, "MemTotal:",   &_systat[1].counts.procmeminfo.MemTotal);
-        p = readllong(p, "MemFree:",    &_systat[1].counts.procmeminfo.MemFree);
-        p = readllong(p, "MemAvailable:", &_systat[1].counts.procmeminfo.MemAvailable);
-        p = readllong(p, "Buffers:",    &_systat[1].counts.procmeminfo.Buffers);
-        p = readllong(p, "Cached:",     &_systat[1].counts.procmeminfo.Cached);
-        p = readllong(p, "Cached:",     &_systat[1].counts.procmeminfo.SwapCached);
-        p = readllong(p, "Active:",     &_systat[1].counts.procmeminfo.Active);
-        p = readllong(p, "Inactive:",   &_systat[1].counts.procmeminfo.Inactive);
-        p = readllong(p, "Unevictable:", &_systat[1].counts.procmeminfo.Unevictable);
-        p = readllong(p, "SwapTotal:",  &_systat[1].counts.procmeminfo.SwapTotal);
-        p = readllong(p, "SwapFree:",   &_systat[1].counts.procmeminfo.SwapFree);
-        p = readllong(p, "Dirty:",      &_systat[1].counts.procmeminfo.Dirty);
-        p = readllong(p, "Mapped:",     &_systat[1].counts.procmeminfo.Mapped);
-        p = readllong(p, "Shmem:",     &_systat[1].counts.procmeminfo.Shmem);
+        p = readllong(p, "MemTotal:",   &_systat[1].procmeminfo.MemTotal);
+        p = readllong(p, "MemFree:",    &_systat[1].procmeminfo.MemFree);
+        p = readllong(p, "MemAvailable:", &_systat[1].procmeminfo.MemAvailable);
+        p = readllong(p, "Buffers:",    &_systat[1].procmeminfo.Buffers);
+        p = readllong(p, "Cached:",     &_systat[1].procmeminfo.Cached);
+        p = readllong(p, "Cached:",     &_systat[1].procmeminfo.SwapCached);
+        p = readllong(p, "Active:",     &_systat[1].procmeminfo.Active);
+        p = readllong(p, "Inactive:",   &_systat[1].procmeminfo.Inactive);
+        p = readllong(p, "Unevictable:", &_systat[1].procmeminfo.Unevictable);
+        p = readllong(p, "SwapTotal:",  &_systat[1].procmeminfo.SwapTotal);
+        p = readllong(p, "SwapFree:",   &_systat[1].procmeminfo.SwapFree);
+        p = readllong(p, "Dirty:",      &_systat[1].procmeminfo.Dirty);
+        p = readllong(p, "Mapped:",     &_systat[1].procmeminfo.Mapped);
+        p = readllong(p, "Shmem:",     &_systat[1].procmeminfo.Shmem);
 
-        _systat[1].counts.sysinfo.memtotalkb = _systat[1].counts.procmeminfo.MemTotal;
+        _systat[1].sysinfo.memtotalkb = _systat[1].procmeminfo.MemTotal;
 
 // FIXME: tally via symbolic names, not anonymous arrays
         /* Active = Active(anon) + Active(file), ie data pages + file pages */
         // active/inactive is less interesting than rss
-        _systat[1].counts.memstats[3] = _systat[1].counts.procmeminfo.Active;
-        _systat[1].counts.memstats[4] = _systat[1].counts.procmeminfo.Inactive;
-        _systat[1].counts.memstats[6] = _systat[1].counts.procmeminfo.MemFree;
-        _systat[1].counts.memfree = _systat[1].counts.procmeminfo.MemFree;
+        _systat[1].memstats[3] = _systat[1].procmeminfo.Active;
+        _systat[1].memstats[4] = _systat[1].procmeminfo.Inactive;
+        _systat[1].memstats[6] = _systat[1].procmeminfo.MemFree;
+        _systat[1].memfree = _systat[1].procmeminfo.MemFree;
 
         // ??? there is no MemShared
         //p = strstr(buf, "MemShared:");
-        //if (p) sscanf(p+10, "%lu", &_systat[1].counts.meminfo[1][0][1]);
+        //if (p) sscanf(p+10, "%lu", &_systat[1].meminfo[1][0][1]);
 
         // Shmem is documented as mem used for tmpfs, so not very useful
         // meminfo(1,0,1) should be counting total shared virtual memory
-        _systat[1].counts.meminfo[1][0][1] = _systat[1].counts.procmeminfo.Shmem;
+        _systat[1].meminfo[1][0][1] = _systat[1].procmeminfo.Shmem;
 
         // maybe also count ShmemHugePages, ShmemPmdMapped
         // note: BSD systat reports on mem held by processes, not total in system
@@ -943,15 +946,15 @@ int gather_stats(long loop_count)
         /* swap activity */
         /* increasing swap used indicates data swapped out */
         /* increasing free swap indicates data swapped in */
-        _systat[1].counts.swapper[1] = _systat[1].counts.procmeminfo.SwapTotal;
-        _systat[1].counts.swapper[0] = _systat[1].counts.procmeminfo.SwapFree;
+        _systat[1].swapper[1] = _systat[1].procmeminfo.SwapTotal;
+        _systat[1].swapper[0] = _systat[1].procmeminfo.SwapFree;
 
         /* other memory stats */
         /* Cached does not include SwapCached */
-        _systat[1].counts.memstats[5] =
-            _systat[1].counts.procmeminfo.Cached + _systat[1].counts.procmeminfo.SwapCached;
-        _systat[1].counts.memstats[13] = _systat[1].counts.procmeminfo.Buffers;
-        _systat[1].counts.memstats[2] = _systat[1].counts.procmeminfo.Unevictable;
+        _systat[1].memstats[5] =
+            _systat[1].procmeminfo.Cached + _systat[1].procmeminfo.SwapCached;
+        _systat[1].memstats[13] = _systat[1].procmeminfo.Buffers;
+        _systat[1].memstats[2] = _systat[1].procmeminfo.Unevictable;
     }
 
     /* NOTE: vmstat:nr_shmem is in pages, meminfo:Shmem in kilobytes! (4x more) */
@@ -960,36 +963,36 @@ int gather_stats(long loop_count)
 
 	/* total paged in and out */
 	p = strstr(buf, "pgpgin");
-	if (p) _systat[1].counts.pager[0] = strtoul(p+6, NULL, 10);
+	if (p) _systat[1].pager[0] = strtoul(p+6, NULL, 10);
 	p = strstr(buf, "pgpgout");
-	if (p) _systat[1].counts.pager[1] = strtoul(p+7, NULL, 10);
+	if (p) _systat[1].pager[1] = strtoul(p+7, NULL, 10);
         if (_linuxver < 3000000) {
 // FIXME: were the pgpgin counts ever in units of pages?  Or always KB?
-            _systat[1].counts.pager[0] *= _pageKB;
-            _systat[1].counts.pager[1] *= _pageKB;
+            _systat[1].pager[0] *= _pageKB;
+            _systat[1].pager[1] *= _pageKB;
         }
 
 	/* swapped in and out */
 	p = strstr(buf, "pswpin");
-	if (p) _systat[1].counts.swapper[0] = strtoul(p+6, NULL, 10);
+	if (p) _systat[1].swapper[0] = strtoul(p+6, NULL, 10);
 	p = strstr(buf, "pswpout");
-	if (p) _systat[1].counts.swapper[1] = strtoul(p+7, NULL, 10);
+	if (p) _systat[1].swapper[1] = strtoul(p+7, NULL, 10);
 // FIXME: pgpgin is in KB, *not* pages -- maybe so are the others?
         if (_linuxver < 3000000) {
-            _systat[1].counts.swapper[0] *= _pageKB;
-            _systat[1].counts.swapper[1] *= _pageKB;
+            _systat[1].swapper[0] *= _pageKB;
+            _systat[1].swapper[1] *= _pageKB;
         }
 
 	/* additional memstats not available from /proc/meminfo  */
 	p = strstr(buf, "pgactivate");
-	if (p) _systat[1].counts.memstats[9] = strtoul(p+10, NULL, 10);
+	if (p) _systat[1].memstats[9] = strtoul(p+10, NULL, 10);
 	p = strstr(buf, "pgalloc_normal");      // allocations, count as zfod
-	if (p) _systat[1].counts.memstats[1] = strtoul(p+14, NULL, 10);
+	if (p) _systat[1].memstats[1] = strtoul(p+14, NULL, 10);
 	p = strstr(buf, "pgfree");              // prcfr
-	if (p) _systat[1].counts.memstats[8] = strtoull(p+7, NULL, 10);
+	if (p) _systat[1].memstats[8] = strtoull(p+7, NULL, 10);
         // ??? TODO: is refault == page reactivations?
 	//p = strstr(buf, "workingset_refault");  // react
-        //if (p) _systat[1].counts.memstats[9] = strtoull(p+18, NULL, 10);
+        //if (p) _systat[1].memstats[9] = strtoull(p+18, NULL, 10);
         // FIXME: units of pages or KB?
 
         /* duplicates of meminfo */
@@ -1001,21 +1004,21 @@ int gather_stats(long loop_count)
 
 	/* page fault stats from /proc/vmstat if available */
 	p = strstr(buf, "pgfault");
-	if (p) _systat[1].counts.faults[0] = strtoul(p+7, NULL, 10);
+	if (p) _systat[1].faults[0] = strtoul(p+7, NULL, 10);
 	p = strstr(buf, "pgmajorfault");
-	if (p) _systat[1].counts.faults[1] = strtoul(p+13, NULL, 10);
+	if (p) _systat[1].faults[1] = strtoul(p+13, NULL, 10);
 	if (p) have_fault_counts = 1;
         // FIXME: units of pages or KB?
 
         /* pgpgs and maybe pdwak */
         p = strstr(buf, "pgsteal_kswapd ");      // daefr
-        if (p) _systat[1].counts.memstats[7] = strtoul(p+15, NULL, 10);
+        if (p) _systat[1].memstats[7] = strtoul(p+15, NULL, 10);
         p = strstr(buf, "pgsteal_direct ");
-        if (p) _systat[1].counts.memstats[7] += strtoul(p+15, NULL, 10);
+        if (p) _systat[1].memstats[7] += strtoul(p+15, NULL, 10);
         p = strstr(buf, "pgscan_kswapd ");       // pdpgs
-        if (p) _systat[1].counts.memstats[11] = strtoul(p+14, NULL, 10);
+        if (p) _systat[1].memstats[11] = strtoul(p+14, NULL, 10);
         p = strstr(buf, "pgscan_direct ");
-        if (p) _systat[1].counts.memstats[11] += strtoul(p+14, NULL, 10);
+        if (p) _systat[1].memstats[11] += strtoul(p+14, NULL, 10);
         // FIXME: units of pages or KB?
     }
 
@@ -1028,18 +1031,18 @@ int gather_stats(long loop_count)
         // scan the summed cpu usage
         // user, user-nice, system, idle, iowait, irq, softirq, steal, guest, guest-nice
         sscanf(p, " cpu %llu %llu %llu %llu %llu %*u %*u %llu %llu %llu",
-               &_systat[1].counts.cpujiffies[2],	// user
-               &_systat[1].counts.cpujiffies[3],	// nice
-               &_systat[1].counts.cpujiffies[0],	// system
-               &_systat[1].counts.cpujiffies[4],	// idle
-               &_systat[1].counts.cpujiffies[5],	// iowait
+               &_systat[1].cpujiffies[2],	// user
+               &_systat[1].cpujiffies[3],	// nice
+               &_systat[1].cpujiffies[0],	// system
+               &_systat[1].cpujiffies[4],	// idle
+               &_systat[1].cpujiffies[5],	// iowait
                                                         // skip irq
                                                         // skip softirq
-               &_systat[1].counts.cpujiffies[6],	// steal
+               &_systat[1].cpujiffies[6],	// steal
 // FIXME: store scanned times in cpujiffies in scan order, not in display order!
 // or use symbolic names for the array offsets
-               &_systat[1].counts.cpujiffies[8],	// guest
-               &_systat[1].counts.cpujiffies[9]	// guest-nice
+               &_systat[1].cpujiffies[8],	// guest
+               &_systat[1].cpujiffies[9]	// guest-nice
         );
     }
     else if (_linuxver >= 2006011) {
@@ -1048,80 +1051,80 @@ int gather_stats(long loop_count)
         // The counts are kernel jiffies spent in each state since boot, always increasing.
         // The counts should always total seconds_since_boot * HZ (jiffies per second)
         sscanf(p, " cpu %llu %llu %llu %llu %llu %*u %*u %llu",
-               &_systat[1].counts.cpujiffies[2],	// user
-               &_systat[1].counts.cpujiffies[3],	// nice
-               &_systat[1].counts.cpujiffies[0],	// system
-               &_systat[1].counts.cpujiffies[4],	// idle
-               &_systat[1].counts.cpujiffies[5],	// iowait
-               &_systat[1].counts.cpujiffies[6]		// steal
+               &_systat[1].cpujiffies[2],	// user
+               &_systat[1].cpujiffies[3],	// nice
+               &_systat[1].cpujiffies[0],	// system
+               &_systat[1].cpujiffies[4],	// idle
+               &_systat[1].cpujiffies[5],	// iowait
+               &_systat[1].cpujiffies[6]		// steal
                                                 // TODO: guest
                                                 // TODO: guest-nice
         );
     }
     else {
         sscanf(p, " cpu %llu %llu %llu %llu",
-               &_systat[1].counts.cpujiffies[2],
-               &_systat[1].counts.cpujiffies[3],
-               &_systat[1].counts.cpujiffies[0],
-               &_systat[1].counts.cpujiffies[4]);
+               &_systat[1].cpujiffies[2],
+               &_systat[1].cpujiffies[3],
+               &_systat[1].cpujiffies[0],
+               &_systat[1].cpujiffies[4]);
     }
     if (_linuxver < 2006000) {
 	p = strstr(buf, "\npage ");
 	if (p)
 	sscanf(p, " page %lu %lu",
-	       &_systat[1].counts.pager[0],
-	       &_systat[1].counts.pager[1]);
+	       &_systat[1].pager[0],
+	       &_systat[1].pager[1]);
 	p = strstr(buf, "\nswap ");
 	if (p)
 	sscanf(p, " swap %lu %lu",
-	       &_systat[1].counts.swapper[0],
-	       &_systat[1].counts.swapper[1]);
+	       &_systat[1].swapper[0],
+	       &_systat[1].swapper[1]);
     }
 
     // note: as of the 4.x kernels (4.14?), /proc/stat no longer maintains accurate intr counts
     // see /proc/interrupts instead, which keeps per-core counts
     p = strstr(buf, "\nintr ");
     // Even the totintr is does not match a hand-total (totintr is too low)
-    //sscanf(p, " intr %llu", &_systat[1].counts.totintr);
+    //sscanf(p, " intr %llu", &_systat[1].totintr);
 /**
     // TODO: use /proc/stat as an alternate to /proc/interrupts (for older kernels)
     sscanf(p, " intr %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
-	   &_systat[1].counts.totintr,
-	   &_systat[1].counts.intr[0],
-	   &_systat[1].counts.intr[1],
-	   &_systat[1].counts.intr[2],
-	   &_systat[1].counts.intr[3],
-	   &_systat[1].counts.intr[4],
-	   &_systat[1].counts.intr[5],
-	   &_systat[1].counts.intr[6],
-	   &_systat[1].counts.intr[7],
-	   &_systat[1].counts.intr[8],
-	   &_systat[1].counts.intr[9],
-	   &_systat[1].counts.intr[10],
-	   &_systat[1].counts.intr[11],
-	   &_systat[1].counts.intr[12],
-	   &_systat[1].counts.intr[13],
-	   &_systat[1].counts.intr[14],
-	   &_systat[1].counts.intr[15],
-	   &_systat[1].counts.intr[16],
-	   &_systat[1].counts.intr[17],
-	   &_systat[1].counts.intr[18],
-	   &_systat[1].counts.intr[19],
-	   &_systat[1].counts.intr[20],
-	   &_systat[1].counts.intr[21],
-	   &_systat[1].counts.intr[22],
-	   &_systat[1].counts.intr[23]);
+	   &_systat[1].totintr,
+	   &_systat[1].intr[0],
+	   &_systat[1].intr[1],
+	   &_systat[1].intr[2],
+	   &_systat[1].intr[3],
+	   &_systat[1].intr[4],
+	   &_systat[1].intr[5],
+	   &_systat[1].intr[6],
+	   &_systat[1].intr[7],
+	   &_systat[1].intr[8],
+	   &_systat[1].intr[9],
+	   &_systat[1].intr[10],
+	   &_systat[1].intr[11],
+	   &_systat[1].intr[12],
+	   &_systat[1].intr[13],
+	   &_systat[1].intr[14],
+	   &_systat[1].intr[15],
+	   &_systat[1].intr[16],
+	   &_systat[1].intr[17],
+	   &_systat[1].intr[18],
+	   &_systat[1].intr[19],
+	   &_systat[1].intr[20],
+	   &_systat[1].intr[21],
+	   &_systat[1].intr[22],
+	   &_systat[1].intr[23]);
 **/
     p = strstr(buf, "\nctxt ");
     sscanf(p, " ctxt %lu",
-	   &_systat[1].counts.ctxt[0]);
+	   &_systat[1].ctxt[0]);
 
     p = strstr(p, "\nprocesses ");
-    sscanf(p, " processes %llu", &_systat[1].counts.ncreatedprocs);
+    sscanf(p, " processes %llu", &_systat[1].ncreatedprocs);
 
     // /proc/stat has a more reliable running-processes count that /proc/*/stat
     p = strstr(p, "\nprocs_running ");
-    sscanf(p, " procs_running %lu", &_systat[1].counts.procstat.running);
+    sscanf(p, " procs_running %lu", &_systat[1].procstat.running);
 
     /* if /proc/diskstats exists (2.5.69 and up), use that --
      * better format, too */
@@ -1159,7 +1162,7 @@ int gather_stats(long loop_count)
 	    num_ios_in_progress, num_ms_for_ios, total_ms_for_io
 	 */
 	double interval = now - _LAST_SAMPLE;
-	for (i=0; devnames[i] && ndevs<lengthof(_systat[1].counts.diskinfo); i++) {
+	for (i=0; devnames[i] && ndevs<lengthof(_systat[1].diskinfo); i++) {
 	    p = strstr(buf, devnames[i]);
 	    if (p) {
                 int devmajor, devminor;
@@ -1186,17 +1189,17 @@ int gather_stats(long loop_count)
 // AR: this next one looks wrong... skips first? nmrd??
 //		sscanf(p+devnamelengths[i], "%*u, %llu, %llu", &nmrd, &rd_sec);
 
-		_systat[1].counts.diskinfo[ndevs][0] = nmrd + nmwr + rd_mrg + wr_mrg;   /* num reads+writes, proxy for tps */
-		_systat[1].counts.diskinfo[ndevs][1] = nmrd + nmwr;                     /* xfers (after r/w merges) */
-		_systat[1].counts.diskinfo[ndevs][2] = rd_sec/2 + wr_sec/2;             /* blks */
-		// _systat[1].counts.diskinfo[ndevs][3] = (ullong)((ms_rd + ms_wr) / (interval * 1000) * 100);  /* msps, but track busy% */
-                _systat[1].counts.diskinfo[ndevs][3] = (ullong)(io_ms);
-                _systat[1].counts.diskinfo[ndevs][4] = rd_sec/2;
-                _systat[1].counts.diskinfo[ndevs][5] = wr_sec/2;
+		_systat[1].diskinfo[ndevs][0] = nmrd + nmwr + rd_mrg + wr_mrg;   /* num reads+writes, proxy for tps */
+		_systat[1].diskinfo[ndevs][1] = nmrd + nmwr;                     /* xfers (after r/w merges) */
+		_systat[1].diskinfo[ndevs][2] = rd_sec/2 + wr_sec/2;             /* blks */
+		// _systat[1].diskinfo[ndevs][3] = (ullong)((ms_rd + ms_wr) / (interval * 1000) * 100);  /* msps, but track busy% */
+                _systat[1].diskinfo[ndevs][3] = (ullong)(io_ms);
+                _systat[1].diskinfo[ndevs][4] = rd_sec/2;
+                _systat[1].diskinfo[ndevs][5] = wr_sec/2;
 		strncpy(_disknames[ndevs], devnames[i]+1, devnamelengths[i]-2);
 // TODO: track and display kb in / out separately (not just total blks)
 		ndevs += 1;
-                if (ndevs >= lengthof(_systat[1].counts.diskinfo)) break;
+                if (ndevs >= lengthof(_systat[1].diskinfo)) break;
 	    }
 	}
     }
@@ -1209,11 +1212,11 @@ int gather_stats(long loop_count)
 	    if (i < 16) {
 		finddiskname(_disknames[i], sizeof(_disknames[i]), maj, min);
 		sscanf(p, "(%d,%d,%d,%d,%d)%n", &a, &b, &c, &d, &e, &n);
-		_systat[1].counts.diskinfo[i][0] = a;           // seeks
-		_systat[1].counts.diskinfo[i][1] = b + d;       // xfers
-		_systat[1].counts.diskinfo[i][2] = c + e;       // blks
-		_systat[1].counts.diskinfo[i][4] = c;           // rblk
-		_systat[1].counts.diskinfo[i][5] = e;           // wblk
+		_systat[1].diskinfo[i][0] = a;           // seeks
+		_systat[1].diskinfo[i][1] = b + d;       // xfers
+		_systat[1].diskinfo[i][2] = c + e;       // blks
+		_systat[1].diskinfo[i][4] = c;           // rblk
+		_systat[1].diskinfo[i][5] = e;           // wblk
 	    }
 	    p += n;
 	}
@@ -1221,15 +1224,15 @@ int gather_stats(long loop_count)
     else {
 	strncpy(_disknames[0], "hdd", sizeof(_disknames[0])-1);
 	p = strstr(buf, "disk_rio");
-	if (p) _systat[1].counts.diskinfo[0][1] = strtol(p+8, NULL, 10);
+	if (p) _systat[1].diskinfo[0][1] = strtol(p+8, NULL, 10);
 	p = strstr(buf, "disk_wio");
-	if (p) _systat[1].counts.diskinfo[0][1] += strtol(p+8, NULL, 10);
+	if (p) _systat[1].diskinfo[0][1] += strtol(p+8, NULL, 10);
 	p = strstr(buf, "disk_rblk");
-	if (p) _systat[1].counts.diskinfo[0][2] = strtol(p+9, NULL, 10);
-	if (p) _systat[1].counts.diskinfo[0][4] = strtol(p+9, NULL, 10);
+	if (p) _systat[1].diskinfo[0][2] = strtol(p+9, NULL, 10);
+	if (p) _systat[1].diskinfo[0][4] = strtol(p+9, NULL, 10);
 	p = strstr(buf, "disk_wblk");
-	if (p) _systat[1].counts.diskinfo[0][2] += strtol(p+9, NULL, 10);
-	if (p) _systat[1].counts.diskinfo[0][5]  = strtol(p+9, NULL, 10);
+	if (p) _systat[1].diskinfo[0][2] += strtol(p+9, NULL, 10);
+	if (p) _systat[1].diskinfo[0][5]  = strtol(p+9, NULL, 10);
     }
 
     /* patch up disknames to make them more legible: abbreviate nvme0n1 to nvme0 */
@@ -1255,10 +1258,10 @@ int gather_stats(long loop_count)
 	//if (strcmp(_netname[_nnet], "lo") == 0) continue;
 	p = strchr(p, ':') + 1;
 	sscanf(p, " %llu %llu %*d %*d %*d %*d %*d %*d %llu %llu",
-	       &_systat[1].counts.net[_nnet*4 + 0],
-	       &_systat[1].counts.net[_nnet*4 + 1],
-	       &_systat[1].counts.net[_nnet*4 + 2],
-	       &_systat[1].counts.net[_nnet*4 + 3]);
+	       &_systat[1].net[_nnet*4 + 0],
+	       &_systat[1].net[_nnet*4 + 1],
+	       &_systat[1].net[_nnet*4 + 2],
+	       &_systat[1].net[_nnet*4 + 3]);
     }
 
     /* processes */
@@ -1306,19 +1309,19 @@ int gather_stats(long loop_count)
                     sscanf(buf, "%llu %llu %llu %llu %llu %llu", &vmsz, &rss, &shrd, &text, &zero, &data);
                     if (is_active) {
                         // TODO: is_active is no longer gathered
-                        _systat[1].counts.meminfo[0][0][0] += rss * pgsz; /* rss */
-                        _systat[1].counts.meminfo[0][1][0] += vmsz * pgsz; /* vmsz */
-                        _systat[1].counts.meminfo[0][1][1] += shrd * pgsz; /* shrd, ie backed by a file */
+                        _systat[1].meminfo[0][0][0] += rss * pgsz; /* rss */
+                        _systat[1].meminfo[0][1][0] += vmsz * pgsz; /* vmsz */
+                        _systat[1].meminfo[0][1][1] += shrd * pgsz; /* shrd, ie backed by a file */
                         // text is read-only code pagse
                         // data is writable heap + stack pages
                     }
-                    _systat[1].counts.meminfo[1][0][0] += rss * pgsz; /* rss */
-                    _systat[1].counts.meminfo[1][1][0] += vmsz * pgsz; /* vmsz */
-                    _systat[1].counts.meminfo[1][1][1] += shrd * pgsz; /* shrd */
+                    _systat[1].meminfo[1][0][0] += rss * pgsz; /* rss */
+                    _systat[1].meminfo[1][1][0] += vmsz * pgsz; /* vmsz */
+                    _systat[1].meminfo[1][1][1] += shrd * pgsz; /* shrd */
                     // kernel processes read "0 0 0 0 0 0 0"
                     if (rss == 0 && vmsz > 0) {
                         /* rss = 0 but vmsz > 0: process is swapped out */
-                        _systat[1].counts.procstat.swapped += 1;	/* +W swapped out */
+                        _systat[1].procstat.swapped += 1;	/* +W swapped out */
                         is_swapped = 1;
                     }
                 }
@@ -1358,23 +1361,23 @@ int gather_stats(long loop_count)
                 // ...but is a much bigger file to scan
 		case 'R':  // R running
                     // we read the running procs count from /proc/stat around line 1125
-		    // _systat[1].counts.procstat.running += 1; // r running
+		    // _systat[1].procstat.running += 1; // r running
                     break;;;
                 case 'I':  // I idle (lx 4.14 and up)
 		case 'S':  // S sleeping in interruptible wait
-		    _systat[1].counts.procstat.sleeping += 1;   // s sleeping
+		    _systat[1].procstat.sleeping += 1;   // s sleeping
                     break;
 		case 'D': // D uninterruptable disk wait (eg nfs?)
-		    _systat[1].counts.procstat.diskwait += 1;   // d iowait (disk wait)
+		    _systat[1].procstat.diskwait += 1;   // d iowait (disk wait)
                     break;
 		case 'T':  // T stopped on signal
                 case 't':  // t tracing stop
-                    _systat[1].counts.procstat.stopped += 1;	// d stopped (but not iowait)
+                    _systat[1].procstat.stopped += 1;	// d stopped (but not iowait)
                     break;
                 case 'Z':  // Z zombie
                 case 'X':  // X dead
                 default:
-                    _systat[1].counts.procstat.sleeping += 1;
+                    _systat[1].procstat.sleeping += 1;
                     break;
                 // p page wait is not tracked separately by linux
                 // w swapped out is not tracked by linux, shows up as non-zero vmsz with zero rss
@@ -1384,10 +1387,10 @@ int gather_stats(long loop_count)
 		if (!have_fault_counts) {
 		    for (i=3; i<10; i++)
 			p = strsep(&s, " \t");
-		    _systat[1].counts.faults[0] += atol(p);	/* minflt */
+		    _systat[1].faults[0] += atol(p);	/* minflt */
 		    p = strsep(&s, " \t");
 		    p = strsep(&s, " \t");
-		    _systat[1].counts.faults[1] += atol(p);	/* majflt */
+		    _systat[1].faults[1] += atol(p);	/* majflt */
 		    /* skip to the 23rd and 24th words, vmsize and rss */
 		    for (i=10; i<23; i++)
 			p = strsep(&s, " \t");
@@ -1399,14 +1402,14 @@ int gather_stats(long loop_count)
 		sprintf(fname, "/proc/%s/status", de->d_name);
 		if (readfile(fname, buf, sizeof(buf)) > 0) {
 		p = strstr(buf, "VmSize:");
-		if (p) _systat[1].counts.meminfo[1][1][0] += strtoul(p+7, NULL, 10);
+		if (p) _systat[1].meminfo[1][1][0] += strtoul(p+7, NULL, 10);
 		p = strstr(buf, "VmRSS:");
-		if (p) _systat[1].counts.meminfo[1][0][0] += strtoul(p+6, NULL, 10);
+		if (p) _systat[1].meminfo[1][0][0] += strtoul(p+6, NULL, 10);
 		p = strstr(buf, "VmExe:");
-		if (p) _systat[1].counts.meminfo[1][1][1] += strtoul(p+6, NULL, 10);
+		if (p) _systat[1].meminfo[1][1][1] += strtoul(p+6, NULL, 10);
 		// not strictly BSD, but shared libs are also shared
 		p = strstr(buf, "VmLib:");
-		if (p) _systat[1].counts.meminfo[1][1][1] += strtoul(p+6, NULL, 10);
+		if (p) _systat[1].meminfo[1][1][1] += strtoul(p+6, NULL, 10);
                 }
 #endif
 	    }
@@ -1427,7 +1430,7 @@ int gather_stats(long loop_count)
 	}
 	endutent();
 
-	_systat[1].counts.nusers = nusers;
+	_systat[1].nusers = nusers;
     }
 #if 0
     sprintf(fname, "/tmp/%d.out", getpid());
@@ -1435,7 +1438,7 @@ int gather_stats(long loop_count)
     system(buf);
     readfile(fname, buf, sizeof(buf));
     remove(fname);
-    sscanf(buf, "%d", &_systat[1].counts.nusers);
+    sscanf(buf, "%d", &_systat[1].nusers);
 #endif
 
     return 0;
@@ -1444,7 +1447,7 @@ int gather_stats(long loop_count)
 void delta_stats( )
 {
     double totjiffies = 0;
-    double ncpu = _systat[1].counts.sysinfo.nthreads;   /* number of linux cores for %sys */
+    double ncpu = _systat[1].sysinfo.nthreads;   /* number of linux cores for %sys */
     double interval = fptime() - _LAST_SAMPLE;          /* sampling interval seconds */
     double intervaljiffies = _hz * interval;            /* jiffies/second * seconds/interval */
     double sysjiffies = intervaljiffies * ncpu;         /* total jiffies available across all cores */
@@ -1452,14 +1455,14 @@ void delta_stats( )
     int i, j;
 
     /* Calculate the cpu jiffies used over the sampling interval. */
-    for (i=0; i<lengthof(_systat[1].counts.cpujiffies); i++) {
-        double njiffies = (_systat[1].counts.cpujiffies[i] - _systat[0].counts.cpujiffies[i]);
+    for (i=0; i<lengthof(_systat[1].cpujiffies); i++) {
+        double njiffies = (_systat[1].cpujiffies[i] - _systat[0].cpujiffies[i]);
         _deltas.cpujiffies[i] = njiffies;
         totjiffies += njiffies;
     }
 
     /* Compute %cpu used from the jiffies. */
-    for (i=0; i<lengthof(_systat[1].counts.cpujiffies); i++) {
+    for (i=0; i<lengthof(_systat[1].cpujiffies); i++) {
         double njiffies = _deltas.cpujiffies[i];
 
         /* Convert core-jiffies used into core-percent, to use in the %s %u %i fields. */
@@ -1473,45 +1476,45 @@ void delta_stats( )
     }
 
     // do not use lastpid, newer kernels do not assign pids monotonically
-    // _deltas.newprocs = _systat[1].counts.nlastpid - _systat[0].counts.nlastpid;
-    _deltas.newprocs = _systat[1].counts.ncreatedprocs - _systat[0].counts.ncreatedprocs;
+    // _deltas.newprocs = _systat[1].nlastpid - _systat[0].nlastpid;
+    _deltas.newprocs = _systat[1].ncreatedprocs - _systat[0].ncreatedprocs;
 
-    _deltas.totintr = _systat[1].counts.totintr - _systat[0].counts.totintr;
+    _deltas.totintr = _systat[1].totintr - _systat[0].totintr;
     for (i=0; i<lengthof(_deltas.intr); i++) {
-	_deltas.intr[i] = _systat[1].counts.intr[i] - _systat[0].counts.intr[i];
+	_deltas.intr[i] = _systat[1].intr[i] - _systat[0].intr[i];
     }
 
     for (i=0; i<2; i++) {
-	_deltas.pager[i] = _systat[1].counts.pager[i] -
-				     _systat[0].counts.pager[i];
-	if (_systat[1].counts.swapper[i] > _systat[0].counts.swapper[i])
-	    _deltas.swapper[i] = _systat[1].counts.swapper[i] -
-					   _systat[0].counts.swapper[i];
+	_deltas.pager[i] = _systat[1].pager[i] -
+				     _systat[0].pager[i];
+	if (_systat[1].swapper[i] > _systat[0].swapper[i])
+	    _deltas.swapper[i] = _systat[1].swapper[i] -
+					   _systat[0].swapper[i];
 	else
 	    /* negative (decreasing) count, display as "0" */
 	    _deltas.swapper[i] = 0;
-	_deltas.faults[i] = _systat[1].counts.faults[i] -
-				      _systat[0].counts.faults[i];
-	_deltas.ctxt[i] = _systat[1].counts.ctxt[i] -
-				    _systat[0].counts.ctxt[i];
+	_deltas.faults[i] = _systat[1].faults[i] -
+				      _systat[0].faults[i];
+	_deltas.ctxt[i] = _systat[1].ctxt[i] -
+				    _systat[0].ctxt[i];
     }
 
-    for (i=0; i<lengthof(_systat[1].counts.diskinfo); i++) {
+    for (i=0; i<lengthof(_systat[1].diskinfo); i++) {
 	for (j=0; j<6; j++)
 	    _deltas.diskinfo[i][j] =
-		_systat[1].counts.diskinfo[i][j] -
-		_systat[0].counts.diskinfo[i][j];
+		_systat[1].diskinfo[i][j] -
+		_systat[0].diskinfo[i][j];
     }
 
     for (i=0; i<14; i++) {
-	_deltas.memstats[i] = _systat[1].counts.memstats[i] - _systat[0].counts.memstats[i];
+	_deltas.memstats[i] = _systat[1].memstats[i] - _systat[0].memstats[i];
     }
 
     for (i=0; i<lengthof(_deltas.net); i++)
-        _deltas.net[i] = _systat[1].counts.net[i] - _systat[0].counts.net[i];
+        _deltas.net[i] = _systat[1].net[i] - _systat[0].net[i];
 
-    _systat[0].counts = _systat[1].counts;
-    //memcpy(&_systat[0].counts, &_systat[1].counts, sizeof(_systat[0].counts));
+    _systat[0] = _systat[1];
+    //memcpy(&_systat[0], &_systat[1], sizeof(_systat[0]));
 }
 
 /* display the accumulated info */
@@ -1524,11 +1527,11 @@ int show_stats( )
     char *uptime = format_timediff(fptime() - _btime);
 
     mvprintw(0, 0, VERSION);
-    mvprintw(0, 12, "%d users", _systat[0].counts.nusers);
+    mvprintw(0, 12, "%d users", _systat[0].nusers);
     putline(0, 22, PAGER_COL+3, "Load %5.2f %5.2f %5.2f   Up %s   ",
-	   _systat[0].counts.loadavg[0],
-	   _systat[0].counts.loadavg[1],
-	   _systat[0].counts.loadavg[2],
+	   _systat[0].loadavg[0],
+	   _systat[0].loadavg[1],
+	   _systat[0].loadavg[2],
            uptime);
 
     // TEST:
@@ -1537,13 +1540,13 @@ int show_stats( )
     // note that maxcpu is distorted by sytat itself, it spikes the clock when running
     r = DISKS_ROW - 1;
     mvprintw(1, 12, "Cpus %lup/%luc/%lut  %4.f MHz (max %4.f)",
-        _systat[0].counts.sysinfo.ncpus,
-        _systat[0].counts.sysinfo.ncores,
-        _systat[0].counts.sysinfo.nthreads,
-        _systat[0].counts.sysinfo.avgmhz,
-        _systat[0].counts.sysinfo.maxmhz);
+        _systat[0].sysinfo.ncpus,
+        _systat[0].sysinfo.ncores,
+        _systat[0].sysinfo.nthreads,
+        _systat[0].sysinfo.avgmhz,
+        _systat[0].sysinfo.maxmhz);
 
-    mvprintw(0, PAGER_COL+5, "%.19s.%03d", ctime(&_systat[0].counts.date), _systat[0].counts.ms);
+    mvprintw(0, PAGER_COL+5, "%.19s.%03d", ctime(&_systat[0].date), _systat[0].ms);
     mvprintw(1, PAGER_COL+5+2, "[%s]", _hostname);
 
     move(3,0);
@@ -1558,37 +1561,37 @@ if (1) {
     swapo - swapped out memory, used swap space
     */
     mvprintw(3, 0, "    vm:   rss %5s  vmsz %5s  shrd %5s",
-        showmem(5, _systat[1].counts.meminfo[1][0][0]),
-        showmem(5, _systat[1].counts.meminfo[1][1][0]),
-        showmem(5, _systat[1].counts.meminfo[1][1][1])
+        showmem(5, _systat[1].meminfo[1][0][0]),
+        showmem(5, _systat[1].meminfo[1][1][0]),
+        showmem(5, _systat[1].meminfo[1][1][1])
     );
     mvprintw(4, 0, "   mem   used  cache   free  avail   swap  swapo");
     mvprintw(5, 0, "%6s %6s %6s %6s %6s %6s",
-        showmem(5, _systat[0].counts.sysinfo.memtotalkb),
-        showmem(5, _systat[0].counts.procmeminfo.MemTotal - _systat[0].counts.procmeminfo.MemAvailable),
-        showmem(5, _systat[0].counts.procmeminfo.Cached + _systat[0].counts.procmeminfo.Buffers),
-        showmem(5, _systat[0].counts.procmeminfo.MemFree),
-        showmem(5, _systat[0].counts.procmeminfo.MemAvailable),
-        showmem(5, _systat[0].counts.procmeminfo.SwapTotal),
-        showmem(5, _systat[0].counts.procmeminfo.SwapTotal - _systat[0].counts.procmeminfo.SwapFree)
+        showmem(5, _systat[0].sysinfo.memtotalkb),
+        showmem(5, _systat[0].procmeminfo.MemTotal - _systat[0].procmeminfo.MemAvailable),
+        showmem(5, _systat[0].procmeminfo.Cached + _systat[0].procmeminfo.Buffers),
+        showmem(5, _systat[0].procmeminfo.MemFree),
+        showmem(5, _systat[0].procmeminfo.MemAvailable),
+        showmem(5, _systat[0].procmeminfo.SwapTotal),
+        showmem(5, _systat[0].procmeminfo.SwapTotal - _systat[0].procmeminfo.SwapFree)
     );
 } else {
-    printw("Mem %7s   Share     VTot   VShare    Free", showmem(7, _systat[0].counts.sysinfo.memtotalkb));
-    // printw("Tot %7s   Share   VM Tot    Share    Free", _systat[0].counts.sysinfo.memtotalkb);
+    printw("Mem %7s   Share     VTot   VShare    Free", showmem(7, _systat[0].sysinfo.memtotalkb));
+    // printw("Tot %7s   Share   VM Tot    Share    Free", _systat[0].sysinfo.memtotalkb);
     move(4,0);
     printw("Act %7s %7s  %7s  %7s %7s  Mem",
-	   showmem(7, _systat[0].counts.meminfo[0][0][0]),
-	   showmem(6, _systat[0].counts.meminfo[0][0][1]),
-	   showmem(6, _systat[0].counts.meminfo[0][1][0]),
-	   showmem(7, _systat[0].counts.meminfo[0][1][1]),
+	   showmem(7, _systat[0].meminfo[0][0][0]),
+	   showmem(6, _systat[0].meminfo[0][0][1]),
+	   showmem(6, _systat[0].meminfo[0][1][0]),
+	   showmem(7, _systat[0].meminfo[0][1][1]),
 	   " ");
     move(5,0);
     printw("Used%7s %7s  %7s  %7s %7s  in kb",
-	   showmem(7, _systat[0].counts.meminfo[1][0][0]),
-	   showmem(7, _systat[0].counts.meminfo[1][0][1]),
-	   showmem(7, _systat[0].counts.meminfo[1][1][0]),
-	   showmem(7, _systat[0].counts.meminfo[1][1][1]),
-	   showmem(7, _systat[0].counts.memfree));
+	   showmem(7, _systat[0].meminfo[1][0][0]),
+	   showmem(7, _systat[0].meminfo[1][0][1]),
+	   showmem(7, _systat[0].meminfo[1][1][0]),
+	   showmem(7, _systat[0].meminfo[1][1][1]),
+	   showmem(7, _systat[0].memfree));
 }
 
     /* process stats */
@@ -1599,17 +1602,17 @@ if (1) {
     //   = Context switches, Traps, System calls, Interrupts, net software Interrupts, page Faults
     // Note that linux does not track p page wait.
     mvprintw(7, 0, "Proc:r   p   d   s   w  Csw  Trp  Int Minf Majf");
-    mvprintw(8, 2, "%s", shownum(4, _systat[0].counts.procstat.running - 1));   // r running processes (but not us)
-    // mvprintw(8, 6, "%s", shownum(4, _systat[0].counts.procstat.pagewait));
+    mvprintw(8, 2, "%s", shownum(4, _systat[0].procstat.running - 1));   // r running processes (but not us)
+    // mvprintw(8, 6, "%s", shownum(4, _systat[0].procstat.pagewait));
     // time spent in i/o wait (ie "page wait") normalized to number of threads (ie vcpus)
     mvprintw(8, 6, "%s", shownum(4, _deltas.syspct[5]			// p computed "page wait"
-        / 100.0 * _systat[0].counts.sysinfo.nthreads + 0.5));
+        / 100.0 * _systat[0].sysinfo.nthreads + 0.5));
 // FIXME: wrong, cannot normalize to num threads, 4% of time over 400 threads is .0001, always rounds to zero
-    mvprintw(8, 10, "%s", shownum(4, _systat[0].counts.procstat.diskwait));	// d
-    mvprintw(8, 14, "%s", shownum(4, _systat[0].counts.procstat.sleeping	// s
-        + _systat[0].counts.procstat.stopped
-        + _systat[0].counts.procstat.zombie));
-    mvprintw(8, 18, "%s", shownum(4, _systat[0].counts.procstat.swapped));	// w
+    mvprintw(8, 10, "%s", shownum(4, _systat[0].procstat.diskwait));	// d
+    mvprintw(8, 14, "%s", shownum(4, _systat[0].procstat.sleeping	// s
+        + _systat[0].procstat.stopped
+        + _systat[0].procstat.zombie));
+    mvprintw(8, 18, "%s", shownum(4, _systat[0].procstat.swapped));	// w
     mvprintw(8, 22, "%5s", shownum(4, _deltas.ctxt[0]));		// Csw
     mvprintw(8, 28, "%s", shownum(4, 0));	// traps, overwritten with New
     //mvprintw(8, 30, "%s", shownum(5, 0));	// syscalls, omit (not tracked)
@@ -1621,7 +1624,7 @@ if (1) {
     mvprintw(8, 28, "%s", shownum(4, _deltas.newprocs));		// New processes created
 
     r = 6;  // mem stats row
-    mvprintw(r++, PAGER_COL, "%s cow", shownum(7, _systat[0].counts.memstats[0]));
+    mvprintw(r++, PAGER_COL, "%s cow", shownum(7, _systat[0].memstats[0]));
     mvprintw(r++, PAGER_COL, "%s zfod", shownum(7, _deltas.memstats[1]));
     mvprintw(r++, PAGER_COL, "%s daefr", shownum(7, _deltas.memstats[7]));
     mvprintw(r++, PAGER_COL, "%s prcfr", shownum(7, _deltas.memstats[8]));
@@ -1629,12 +1632,12 @@ if (1) {
     mvprintw(r++, PAGER_COL, "%7s pdwak", shownum(7, _deltas.memstats[10]));
     mvprintw(r++, PAGER_COL, "%s pdpgs", shownum(7, _deltas.memstats[11]));
     mvprintw(r++, PAGER_COL, "%s intrn", shownum(7, _deltas.memstats[12]));
-    mvprintw(r++, PAGER_COL-1, "%s wire", shownum(8, _systat[0].counts.memstats[2]));
-    mvprintw(r++, PAGER_COL-1, "%s act", shownum(8, _systat[0].counts.memstats[3]));
-    mvprintw(r++, PAGER_COL-1, "%s inact", shownum(8, _systat[0].counts.memstats[4]));
-    mvprintw(r++, PAGER_COL-1, "%s cache", shownum(8, _systat[0].counts.memstats[5]));
-    mvprintw(r++, PAGER_COL-1, "%s free", shownum(8, _systat[0].counts.memstats[6]));
-    mvprintw(r++, PAGER_COL-1, "%s buf", shownum(8, _systat[0].counts.memstats[13]));
+    mvprintw(r++, PAGER_COL-1, "%s wire", shownum(8, _systat[0].memstats[2]));
+    mvprintw(r++, PAGER_COL-1, "%s act", shownum(8, _systat[0].memstats[3]));
+    mvprintw(r++, PAGER_COL-1, "%s inact", shownum(8, _systat[0].memstats[4]));
+    mvprintw(r++, PAGER_COL-1, "%s cache", shownum(8, _systat[0].memstats[5]));
+    mvprintw(r++, PAGER_COL-1, "%s free", shownum(8, _systat[0].memstats[6]));
+    mvprintw(r++, PAGER_COL-1, "%s buf", shownum(8, _systat[0].memstats[13]));
 
 // 10 sec of 4x 100% cpu, one niced:
 //   cpu  640186946 26188 182202272 43534263203 23846764 0 16349114 0 539500779 0
@@ -1694,9 +1697,9 @@ if (1) {
     mvprintw(6, INTR_COL, " Interrupts");
     mvprintw(7, INTR_COL, "%5s total", shownum(4, _deltas.totintr));
     // r = interrupts row
-    for (r=8, i=0; i<lengthof(_systat[1].counts.intr); i++) {
+    for (r=8, i=0; i<lengthof(_systat[1].intr); i++) {
 	/* map interrupt to device in /proc/interrupts (2.4 series) */
-	if (_systat[1].counts.intr[i] && r<W_LINES)
+	if (_systat[1].intr[i] && r<W_LINES)
         {
 	    strncpy(buf, _intrnames[i], sizeof(buf) - 1);
 	    if (W_COLUMNS - INTR_COL - 11 < sizeof(buf)) buf[W_COLUMNS - INTR_COL - 11] = '\0';
@@ -1744,7 +1747,7 @@ if (1) {
         double busy = _deltas.diskinfo[i][3] / (interval * 1000) * 100;
         if (!strlen(_disknames[i])) continue;
         /* only show devices with activity, to skip controllers without attached devices */
-        if (_systat[0].counts.diskinfo[i][1]) {
+        if (_systat[0].diskinfo[i][1]) {
             mvprintw(r+0, 6+6*coli, "%6s", _disknames[i]);
             mvprintw(r+1, 6+6*coli, "%6.6s", shownum(5, _deltas.diskinfo[i][0]));     // tps
             mvprintw(r+2, 6+6*coli, "%6.6s", shownum(5, _deltas.diskinfo[i][1]));     // xfers
@@ -1765,7 +1768,7 @@ if (1) {
         mvprintw(rowi, 0, "                                                    ");
 	move(rowi,0);
         // only display those interfaces that have ever been active
-	if (_systat[0].counts.net[i*4 + 0] || _systat[0].counts.net[i*4 + 2]) {
+	if (_systat[0].net[i*4 + 0] || _systat[0].net[i*4 + 2]) {
 	    printw("%8s:  Rx: %s/%s Tx: %s/%s             ",
 		   _netname[i],
 		   shownetnum(5, _deltas.net[i*4 + 0]),
