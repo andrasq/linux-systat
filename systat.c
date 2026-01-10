@@ -1,6 +1,6 @@
 /*
  * systat -- BSD-like systat(1) for Linux
- * Copyright (C) 2007-2025 Andras Radics
+ * Copyright (C) 2007-2026 Andras Radics
  *
  * Licensed under the Apache License, Version 2.0
  */
@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.17.2"
+#define VERSION "v0.17.3"
 
 /**
 
@@ -357,7 +357,6 @@ struct system_stats_s {
 	unsigned long ctxt[2];		/* csw, trp */
 	ullong        totintr;		/* total interrupts since boot */
 	ullong        intr[200];	/* interrupts from irq 0 .. 15 */
-	unsigned long vm[6];		/* vss rss data stk exe lib */
         struct {			/* r p d s w */
             ulong running;
             // p is page wait, not tracked by linux
@@ -374,31 +373,30 @@ struct system_stats_s {
     }
     counts;
 
-// FIXME: make _systat_0, _systat_1 and _deltas 3 instances of the same struct!
-// TODO: rename _systat.counts[0] to _nprevious, _systat.counts[1] to _ncurrent, _systat.deltas to _deltas
+// TODO: rename _systat[0].counts to _nprevious, _systat[1].counts to _ncurrent
 // TODO: make counts[0], counts[1] and deltas each be the same struct
 // FIXME: to guarantee that array sizes remain in sync
 // TODO: read stats into _systat[1] by symbolic name eg VMSTAT_PGPGIN,
 //       compute values for display by symbolic name later.
-    struct {
-	ullong cpujiffies[10];  /* >= 2.6.33: usr,nice,sys,idle,iow,irq,softirq,steal,guest,guestnice */
-	double corepct[10];     // %cpu scaled to 1 core
-	double syspct[10];      // %cpu scaled to total system cores
-	double cpuuse[10];
-	ullong newprocs;
-	ullong pager[2];
-	ullong swapper[2];
-	ullong faults[2];
-	ullong ctxt[2];
-	ullong totintr;
-	ullong intr[100];
-	ullong net[lengthof(_netname)*4];
-	ullong diskinfo[16][6];
-	ullong memstats[14];
-    }
-    deltas;
 };
 struct system_stats_s _systat[2];
+
+struct deltas_s {
+    ullong cpujiffies[10];  /* >= 2.6.33: usr,nice,sys,idle,iow,irq,softirq,steal,guest,guestnice */
+    double corepct[10];     // %cpu scaled to 1 core
+    double syspct[10];      // %cpu scaled to total system cores
+    double cpuuse[10];
+    ullong newprocs;
+    ullong pager[2];
+    ullong swapper[2];
+    ullong faults[2];
+    ullong ctxt[2];
+    ullong totintr;
+    ullong intr[200];
+    ullong net[lengthof(_netname)*4];
+    ullong diskinfo[16][6];
+    ullong memstats[14];
+} _deltas;
 
 
 /* current time as a float */
@@ -769,6 +767,7 @@ int gather_stats(long loop_count)
 
     _systat[0] = _systat[1];
     memset(&_systat[1], 0, sizeof(_systat[1]));
+    memset(&_deltas, 0, sizeof(_deltas));
 
     _systat[1].counts.date = (time_t) now;
     _systat[1].counts.ms = 1000 * (now - (ullong)now);
@@ -1455,61 +1454,61 @@ void delta_stats( )
     /* Calculate the cpu jiffies used over the sampling interval. */
     for (i=0; i<lengthof(_systat[1].counts.cpujiffies); i++) {
         double njiffies = (_systat[1].counts.cpujiffies[i] - _systat[0].counts.cpujiffies[i]);
-        _systat[0].deltas.cpujiffies[i] = njiffies;
+        _deltas.cpujiffies[i] = njiffies;
         totjiffies += njiffies;
     }
 
     /* Compute %cpu used from the jiffies. */
     for (i=0; i<lengthof(_systat[1].counts.cpujiffies); i++) {
-        double njiffies = _systat[0].deltas.cpujiffies[i];
+        double njiffies = _deltas.cpujiffies[i];
 
         /* Convert core-jiffies used into core-percent, to use in the %s %u %i fields. */
         /* The times we read are for all cpu cores total, we do not read the per-core stats, */
         /* so corepct can exceed 100% on multi-core systems */
-        _systat[0].deltas.corepct[i] = njiffies / intervaljiffies * 100.0;
+        _deltas.corepct[i] = njiffies / intervaljiffies * 100.0;
 
         /* Also track the fraction of total available system cpu time used in this interval.
          * This measurement can never exceed 100%.  This count is used for the bar chart. */
-        _systat[0].deltas.syspct[i] = _systat[0].deltas.corepct[i] * fractionOfAllCores;;
+        _deltas.syspct[i] = _deltas.corepct[i] * fractionOfAllCores;;
     }
 
     // do not use lastpid, newer kernels do not assign pids monotonically
-    // _systat[0].deltas.newprocs = _systat[1].counts.nlastpid - _systat[0].counts.nlastpid;
-    _systat[0].deltas.newprocs = _systat[1].counts.ncreatedprocs - _systat[0].counts.ncreatedprocs;
+    // _deltas.newprocs = _systat[1].counts.nlastpid - _systat[0].counts.nlastpid;
+    _deltas.newprocs = _systat[1].counts.ncreatedprocs - _systat[0].counts.ncreatedprocs;
 
-    _systat[0].deltas.totintr = _systat[1].counts.totintr - _systat[0].counts.totintr;
-    for (i=0; i<lengthof(_systat[0].deltas.intr); i++) {
-	_systat[0].deltas.intr[i] = _systat[1].counts.intr[i] - _systat[0].counts.intr[i];
+    _deltas.totintr = _systat[1].counts.totintr - _systat[0].counts.totintr;
+    for (i=0; i<lengthof(_deltas.intr); i++) {
+	_deltas.intr[i] = _systat[1].counts.intr[i] - _systat[0].counts.intr[i];
     }
 
     for (i=0; i<2; i++) {
-	_systat[0].deltas.pager[i] = _systat[1].counts.pager[i] -
+	_deltas.pager[i] = _systat[1].counts.pager[i] -
 				     _systat[0].counts.pager[i];
 	if (_systat[1].counts.swapper[i] > _systat[0].counts.swapper[i])
-	    _systat[0].deltas.swapper[i] = _systat[1].counts.swapper[i] -
+	    _deltas.swapper[i] = _systat[1].counts.swapper[i] -
 					   _systat[0].counts.swapper[i];
 	else
 	    /* negative (decreasing) count, display as "0" */
-	    _systat[0].deltas.swapper[i] = 0;
-	_systat[0].deltas.faults[i] = _systat[1].counts.faults[i] -
+	    _deltas.swapper[i] = 0;
+	_deltas.faults[i] = _systat[1].counts.faults[i] -
 				      _systat[0].counts.faults[i];
-	_systat[0].deltas.ctxt[i] = _systat[1].counts.ctxt[i] -
+	_deltas.ctxt[i] = _systat[1].counts.ctxt[i] -
 				    _systat[0].counts.ctxt[i];
     }
 
     for (i=0; i<lengthof(_systat[1].counts.diskinfo); i++) {
 	for (j=0; j<6; j++)
-	    _systat[0].deltas.diskinfo[i][j] =
+	    _deltas.diskinfo[i][j] =
 		_systat[1].counts.diskinfo[i][j] -
 		_systat[0].counts.diskinfo[i][j];
     }
 
     for (i=0; i<14; i++) {
-	_systat[0].deltas.memstats[i] = _systat[1].counts.memstats[i] - _systat[0].counts.memstats[i];
+	_deltas.memstats[i] = _systat[1].counts.memstats[i] - _systat[0].counts.memstats[i];
     }
 
-    for (i=0; i<lengthof(_systat[0].deltas.net); i++)
-    	_systat[0].deltas.net[i] = _systat[1].counts.net[i] - _systat[0].counts.net[i];
+    for (i=0; i<lengthof(_deltas.net); i++)
+        _deltas.net[i] = _systat[1].counts.net[i] - _systat[0].counts.net[i];
 
     _systat[0].counts = _systat[1].counts;
     //memcpy(&_systat[0].counts, &_systat[1].counts, sizeof(_systat[0].counts));
@@ -1603,7 +1602,7 @@ if (1) {
     mvprintw(8, 2, "%s", shownum(4, _systat[0].counts.procstat.running - 1));   // r running processes (but not us)
     // mvprintw(8, 6, "%s", shownum(4, _systat[0].counts.procstat.pagewait));
     // time spent in i/o wait (ie "page wait") normalized to number of threads (ie vcpus)
-    mvprintw(8, 6, "%s", shownum(4, _systat[0].deltas.syspct[5]			// p computed "page wait"
+    mvprintw(8, 6, "%s", shownum(4, _deltas.syspct[5]			// p computed "page wait"
         / 100.0 * _systat[0].counts.sysinfo.nthreads + 0.5));
 // FIXME: wrong, cannot normalize to num threads, 4% of time over 400 threads is .0001, always rounds to zero
     mvprintw(8, 10, "%s", shownum(4, _systat[0].counts.procstat.diskwait));	// d
@@ -1611,25 +1610,25 @@ if (1) {
         + _systat[0].counts.procstat.stopped
         + _systat[0].counts.procstat.zombie));
     mvprintw(8, 18, "%s", shownum(4, _systat[0].counts.procstat.swapped));	// w
-    mvprintw(8, 22, "%5s", shownum(4, _systat[0].deltas.ctxt[0]));		// Csw
+    mvprintw(8, 22, "%5s", shownum(4, _deltas.ctxt[0]));		// Csw
     mvprintw(8, 28, "%s", shownum(4, 0));	// traps, overwritten with New
     //mvprintw(8, 30, "%s", shownum(5, 0));	// syscalls, omit (not tracked)
-    mvprintw(8, 33, "%s", shownum(4, _systat[0].deltas.totintr));		// Int
-    mvprintw(8, 38, "%s", shownum(4, _systat[0].deltas.faults[0]));		// Minf
-    mvprintw(8, 43, "%s", shownum(4, _systat[0].deltas.faults[1]));		// Majf
+    mvprintw(8, 33, "%s", shownum(4, _deltas.totintr));		// Int
+    mvprintw(8, 38, "%s", shownum(4, _deltas.faults[0]));		// Minf
+    mvprintw(8, 43, "%s", shownum(4, _deltas.faults[1]));		// Majf
     // overwrite Trp with New
     mvprintw(7, 29, "New");
-    mvprintw(8, 28, "%s", shownum(4, _systat[0].deltas.newprocs));		// New processes created
+    mvprintw(8, 28, "%s", shownum(4, _deltas.newprocs));		// New processes created
 
     r = 6;  // mem stats row
     mvprintw(r++, PAGER_COL, "%s cow", shownum(7, _systat[0].counts.memstats[0]));
-    mvprintw(r++, PAGER_COL, "%s zfod", shownum(7, _systat[0].deltas.memstats[1]));
-    mvprintw(r++, PAGER_COL, "%s daefr", shownum(7, _systat[0].deltas.memstats[7]));
-    mvprintw(r++, PAGER_COL, "%s prcfr", shownum(7, _systat[0].deltas.memstats[8]));
-    mvprintw(r++, PAGER_COL, "%s react", shownum(7, _systat[0].deltas.memstats[9]));
-    mvprintw(r++, PAGER_COL, "%7s pdwak", shownum(7, _systat[0].deltas.memstats[10]));
-    mvprintw(r++, PAGER_COL, "%s pdpgs", shownum(7, _systat[0].deltas.memstats[11]));
-    mvprintw(r++, PAGER_COL, "%s intrn", shownum(7, _systat[0].deltas.memstats[12]));
+    mvprintw(r++, PAGER_COL, "%s zfod", shownum(7, _deltas.memstats[1]));
+    mvprintw(r++, PAGER_COL, "%s daefr", shownum(7, _deltas.memstats[7]));
+    mvprintw(r++, PAGER_COL, "%s prcfr", shownum(7, _deltas.memstats[8]));
+    mvprintw(r++, PAGER_COL, "%s react", shownum(7, _deltas.memstats[9]));
+    mvprintw(r++, PAGER_COL, "%7s pdwak", shownum(7, _deltas.memstats[10]));
+    mvprintw(r++, PAGER_COL, "%s pdpgs", shownum(7, _deltas.memstats[11]));
+    mvprintw(r++, PAGER_COL, "%s intrn", shownum(7, _deltas.memstats[12]));
     mvprintw(r++, PAGER_COL-1, "%s wire", shownum(8, _systat[0].counts.memstats[2]));
     mvprintw(r++, PAGER_COL-1, "%s act", shownum(8, _systat[0].counts.memstats[3]));
     mvprintw(r++, PAGER_COL-1, "%s inact", shownum(8, _systat[0].counts.memstats[4]));
@@ -1645,17 +1644,17 @@ if (1) {
 
     fmt = "%6s%%s%6s%%q%6s%%u%6s%%n%6s%%i%6s%%w";
     mvprintw(10, 0, fmt,
-	    showfloat(6, 1, _systat[0].deltas.corepct[0]),	/* system */
-	    showfloat(6, 1, _systat[0].deltas.corepct[1]),	/* interrupt */
-	    showfloat(6, 1, _systat[0].deltas.corepct[2]),	/* user not including nice */
-	    showfloat(6, 1, _systat[0].deltas.corepct[3]),	/* nice */
-	    // showfloat(6, 1, _systat[0].deltas.syspct[4]),	/* idle -- as percent of total system time */
-            showfloat(5, 0, _systat[0].deltas.corepct[4]),	/* idle -- normalized to 1 core */
-	    showfloat(6, 1, _systat[0].deltas.corepct[5]));	/* iowait */
+	    showfloat(6, 1, _deltas.corepct[0]),	/* system */
+	    showfloat(6, 1, _deltas.corepct[1]),	/* interrupt */
+	    showfloat(6, 1, _deltas.corepct[2]),	/* user not including nice */
+	    showfloat(6, 1, _deltas.corepct[3]),	/* nice */
+	    // showfloat(6, 1, _deltas.syspct[4]),	/* idle -- as percent of total system time */
+            showfloat(5, 0, _deltas.corepct[4]),	/* idle -- normalized to 1 core */
+	    showfloat(6, 1, _deltas.corepct[5]));	/* iowait */
                                                 /* TODO: guest, guest-nice */
 
     if (PAGER_COL >= 56) {
-        mvprintw(10, 6*8, "%6s%%t", showfloat(6, 1, _systat[0].deltas.syspct[6]));	/* steal */
+        mvprintw(10, 6*8, "%6s%%t", showfloat(6, 1, _deltas.syspct[6]));	/* steal */
         /* TODO: guest, guest-nice */
     }
 
@@ -1676,24 +1675,24 @@ if (1) {
     move(12,0);
     /* TODO: precompute the bar graph, and output it with a single call */
     fr = i = 0;
-    fr += scale * _systat[0].deltas.syspct[0];
+    fr += scale * _deltas.syspct[0];
     for (; (i+.5)<fr; i++) addch('=');		/* kernel (system) */
-    fr += scale * _systat[0].deltas.syspct[1];
+    fr += scale * _deltas.syspct[1];
     for (; (i+.5)<fr; i++) addch('+');		/* interrupt handling */
-    fr += scale * _systat[0].deltas.syspct[2];
+    fr += scale * _deltas.syspct[2];
     for (; (i+.5)<fr; i++) addch('>');		/* user */
-    fr += scale * _systat[0].deltas.syspct[3];
+    fr += scale * _deltas.syspct[3];
     for (; (i+.5)<fr; i++) addch('-');		/* nice (lowered prio, >0) */
-    fr += scale * _systat[0].deltas.syspct[5];
+    fr += scale * _deltas.syspct[5];
     for (; (i+.5)<fr; i++) addch('.');		/* iowait */
-    fr += scale * _systat[0].deltas.syspct[6];
+    fr += scale * _deltas.syspct[6];
     for (; (i+.5)<fr; i++) addch('$');		/* cpu steal */
-    fr += scale * _systat[0].deltas.syspct[4];
+    fr += scale * _deltas.syspct[4];
     for (; (i+.5)<fr; i++) addch(' ');		/* idle */
 
     // Interrupts
     mvprintw(6, INTR_COL, " Interrupts");
-    mvprintw(7, INTR_COL, "%5s total", shownum(4, _systat[0].deltas.totintr));
+    mvprintw(7, INTR_COL, "%5s total", shownum(4, _deltas.totintr));
     // r = interrupts row
     for (r=8, i=0; i<lengthof(_systat[1].counts.intr); i++) {
 	/* map interrupt to device in /proc/interrupts (2.4 series) */
@@ -1703,7 +1702,7 @@ if (1) {
 	    if (W_COLUMNS - INTR_COL - 11 < sizeof(buf)) buf[W_COLUMNS - INTR_COL - 11] = '\0';
             else buf[sizeof(buf) - 1] = '\0';
             putline(r++, INTR_COL, 0, " %4s %s %.32s",
-                shownum(4, _systat[0].deltas.intr[i]), _intrnums[i], buf);
+                shownum(4, _deltas.intr[i]), _intrnums[i], buf);
 	}
     }
 
@@ -1712,18 +1711,18 @@ if (1) {
     /*                        12345 12345 12345 12345   */
     /*
     mvprintw(4, PAGER_COL,   " %5lu %-5lu %5lu %-5lu",
-        _systat[0].deltas.pager[0],
-        _systat[0].deltas.pager[1],
-        _systat[0].deltas.swapper[0],
-        _systat[0].deltas.swapper[1]);
+        _deltas.pager[0],
+        _deltas.pager[1],
+        _deltas.swapper[0],
+        _deltas.swapper[1]);
     */
-    p = showmem(5, _systat[0].deltas.pager[0]);
+    p = showmem(5, _deltas.pager[0]);
     mvprintw(4, PAGER_COL+2, "%5s", p);
-    p = showmem(5, _systat[0].deltas.pager[1]); while (*p == ' ') p++;
+    p = showmem(5, _deltas.pager[1]); while (*p == ' ') p++;
     mvprintw(4, PAGER_COL+8, "%-5s", p);
-    p = showmem(5, _systat[0].deltas.swapper[0]);
+    p = showmem(5, _deltas.swapper[0]);
     mvprintw(4, PAGER_COL+14, "%5s", p);
-    p = showmem(5, _systat[0].deltas.swapper[1]); while (*p == ' ') p++;
+    p = showmem(5, _deltas.swapper[1]); while (*p == ' ') p++;
     mvprintw(4, PAGER_COL+20, "%-5s", p);
 
     r = DISKS_ROW;
@@ -1742,15 +1741,15 @@ if (1) {
     if (n > 16) n = 16;
     double interval = fptime() - _LAST_SAMPLE;
     for (coli=0, i=0; i<n; i++) {
-        double busy = _systat[0].deltas.diskinfo[i][3] / (interval * 1000) * 100;
+        double busy = _deltas.diskinfo[i][3] / (interval * 1000) * 100;
         if (!strlen(_disknames[i])) continue;
         /* only show devices with activity, to skip controllers without attached devices */
         if (_systat[0].counts.diskinfo[i][1]) {
             mvprintw(r+0, 6+6*coli, "%6s", _disknames[i]);
-            mvprintw(r+1, 6+6*coli, "%6.6s", shownum(5, _systat[0].deltas.diskinfo[i][0]));     // tps
-            mvprintw(r+2, 6+6*coli, "%6.6s", shownum(5, _systat[0].deltas.diskinfo[i][1]));     // xfers
-            mvprintw(r+3, 6+6*coli, "%6.6s", showmem(5, _systat[0].deltas.diskinfo[i][4]));     // rblk
-            mvprintw(r+4, 6+6*coli, "%6.6s", showmem(5, _systat[0].deltas.diskinfo[i][5]));     // wblk
+            mvprintw(r+1, 6+6*coli, "%6.6s", shownum(5, _deltas.diskinfo[i][0]));     // tps
+            mvprintw(r+2, 6+6*coli, "%6.6s", shownum(5, _deltas.diskinfo[i][1]));     // xfers
+            mvprintw(r+3, 6+6*coli, "%6.6s", showmem(5, _deltas.diskinfo[i][4]));     // rblk
+            mvprintw(r+4, 6+6*coli, "%6.6s", showmem(5, _deltas.diskinfo[i][5]));     // wblk
             mvprintw(r+5, 6+6*coli, "%6.6s", busy ? showfloat(5, 1, busy) : " ");               // %busy
             ++coli;
         }
@@ -1769,10 +1768,10 @@ if (1) {
 	if (_systat[0].counts.net[i*4 + 0] || _systat[0].counts.net[i*4 + 2]) {
 	    printw("%8s:  Rx: %s/%s Tx: %s/%s             ",
 		   _netname[i],
-		   shownetnum(5, _systat[0].deltas.net[i*4 + 0]),
-		   shownetnum(5, _systat[0].deltas.net[i*4 + 1]),
-		   shownetnum(5, _systat[0].deltas.net[i*4 + 2]),
-		   shownetnum(5, _systat[0].deltas.net[i*4 + 3]));
+		   shownetnum(5, _deltas.net[i*4 + 0]),
+		   shownetnum(5, _deltas.net[i*4 + 1]),
+		   shownetnum(5, _deltas.net[i*4 + 2]),
+		   shownetnum(5, _deltas.net[i*4 + 3]));
             rowi++;
         }
     }
