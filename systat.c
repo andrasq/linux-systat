@@ -1117,12 +1117,12 @@ int gather_stats(long loop_count)
     sscanf(p, " ctxt %lu",
 	   &_systat[1].counts.ctxt[0]);
 
-    p = strstr(buf, "\nprocesses ");
+    p = strstr(p, "\nprocesses ");
     sscanf(p, " processes %llu", &_systat[1].counts.ncreatedprocs);
 
     // /proc/stat has a more reliable running-processes count that /proc/*/stat
-    p = strstr(buf, "\nprocs_running ");
-    sscanf(p, " procs_running %lu", &_systat[1].counts.procs[0]);
+    p = strstr(p, "\nprocs_running ");
+    sscanf(p, " procs_running %lu", &_systat[1].counts.procstat.running);
 
     /* if /proc/diskstats exists (2.5.69 and up), use that --
      * better format, too */
@@ -1740,7 +1740,6 @@ if (1) {
     n = (PAGER_COL - 6) / 6 ;
     if (DISKS_ROW >= 18) n += 2;
     if (n > 16) n = 16;
-// FIXME: this is the wrong interval!  Want when samples were collected, not now
     double interval = fptime() - _LAST_SAMPLE;
     for (coli=0, i=0; i<n; i++) {
         double busy = _systat[0].deltas.diskinfo[i][3] / (interval * 1000) * 100;
@@ -1864,7 +1863,6 @@ int main( int ac, char *av[] )
     if (ac > 0)
         pause = atof(*av);
 
-// FIXME: long intervals do not work as expected (5 sec, 50 sec)
     _INTERVAL = pause;
     _linuxver = gather_version();
     _pageKB = getpagesize() / 1024;
