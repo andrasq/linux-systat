@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.17.0"
+#define VERSION "v0.17.1"
 
 /**
 
@@ -515,10 +515,9 @@ char * _showit( int fieldwidth, int frac, ullong val, char *units, ullong bases[
         return buf;
     }
 
-    snprintf(buf, sizeof(*bufs), "%*llu", fieldwidth, val);
-
     /* try to fit field overflow by changing the units */
     /* if decimals are allowed do not typeset more than 4 digits */
+    snprintf(buf, sizeof(*bufs), "%*llu", fieldwidth, val);
     for (p = units, b = bases; *p && (strlen(buf) > fieldwidth || (frac > 0 && (val / *b >= 10000))); p++, b++) {
         // TODO: test fit numerically not with strlen
         if (frac) {
@@ -547,22 +546,31 @@ char * _showit( int fieldwidth, int frac, ullong val, char *units, ullong bases[
     return buf;
 }
 
+void populate_powers( ullong powers[], int count, ullong initial, ullong scale ) {
+    int i;
+    powers[0] = initial;
+    for (i = 1; i < count; i++) powers[i] = scale * powers[i - 1];
+}
+
 /* typeset a value to fit the field width, scale by powers of 1024 */
+static ullong bases1024[6] = {0};
 char * showmem( int fieldwidth, ullong val )
 {
+    if (bases1024[0] == 0) populate_powers(bases1024, lengthof(bases1024), 1, 1024);
     /* memory is reported in units of 1024 kilobytes, so 1 is 1K and 1024 is 1M */
-    const ullong K = 1024, M = K*K, G = M*K, T = G*K, P = T*K, E = P*K;
-    ullong bases[] = { 1, K, M, G, T, P, E };
+    ullong *bases = bases1024;
+    // note: we track memory in units of KiB, a value 1 means 1K, hence units "KMGT"
     // FIXME: Z, Y not representable in 64 bits
     return _showit(fieldwidth, 1, val, "KMGTPE", bases);
 }
 
 /* typeset a float to fit the field width, scale by powers of 1000 */
+static ullong bases1000[6];
 char * showfnum( int fieldwidth, int decimals, ullong val )
 {
+    if (bases1000[0] == 0) populate_powers(bases1000, lengthof(bases1000), 1000, 1000);
     int overflows = fieldwidth-1 < lengthof(_pow10) && val >= _pow10[fieldwidth-1];
-    const ullong k = 1000, m = k*k, g = m*k, t = g*k, p = t*k, e = p*k;
-    ullong bases[] = { k, m, g, t, p, e };
+    ullong *bases = bases1000;
     // FIXME: z, y not representable in 64 bits
     return _showit(fieldwidth, overflows ? 0 : decimals, val, "kmgtpe", bases);
 }
