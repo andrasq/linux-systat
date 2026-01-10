@@ -10,7 +10,7 @@
  * Gcc-3.2 and Gcc-2.95.3 also work.  Build w/ -Os -s to minimize size.
  */
 
-#define VERSION "v0.17.5"
+#define VERSION "v0.17.6"
 
 /**
 
@@ -769,6 +769,7 @@ int gather_stats(long loop_count)
     const char *p;
     char *q, buf[200000], fname[80], *nextp, *nextw;
     ullong i, j, n;
+    int nc;
     int have_fault_counts = 0;
     double now = fptime();
     char tmpbuf[200];
@@ -847,6 +848,8 @@ int gather_stats(long loop_count)
     _systat[1].totintr = 0;
     nextp = buf;
     p = strsep(&nextp, "\n");
+    // scan and total the interrupts
+    // Collapses back-to-back interrupt rows of the same name, saving screen rows
     for (i=0; i<lengthof(_intrnames); i++) {
 	char num[100];
         unsigned long int n, m;
@@ -858,20 +861,23 @@ int gather_stats(long loop_count)
             _intrnums[i][sizeof(_intrnums[i]-1)] = '\0';
 
             // the double-space delimited string at the end is the interrupt name
+            // Copy the name each time because we omit inactive interrupts, but
+            // they could become active in the middle of the list
             q = strchr(p, '\0');
             while (q[-1] != ' ' || q[-2] != ' ') --q;
             strncpy(_intrnames[i], q, sizeof(_intrnames[i])-1);
-            _intrnames[i][sizeof(_intrnames[i])-1] = '\0';
             *q = '\0';
 
             // total up the numeric columns (per-core interrupt counts) in the middle
             while (*p != ':') p++;
             p++;
             count = 0;
-            while (*p == ' ' || *p >= '0' && *p <= '9') {
-                while (*p == ' ') p++;
-                if (sscanf(p, "%lu", &n)) count += n;
-                while (*p >= '0' && *p <= '9') p++;
+            // total up the interrupts across all vcpus
+            // scan until the first non-purely-numeric column
+            for (j = 0; j < _systat[1].sysinfo.nthreads; j++) {
+                ullong cnt;
+                // extract a number surrounded by whitespace
+                if (sscanf(p, " %llu %n", &cnt, &nc) > 0) { count += cnt; p += nc; }
             }
 
             _systat[1].intr[i] = count;
